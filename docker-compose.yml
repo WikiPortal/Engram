@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+
+  # ── 1. Qdrant — Vector Database ───────────────────────
+  # Stores memory embeddings, powers semantic search
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: engram_qdrant
+    ports:
+      - "6333:6333"   # HTTP API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. PostgreSQL — Relational Database ───────────────
+  # Stores memory metadata, audit trail, PII vault, contradiction flags
+  postgres:
+    image: postgres:16-alpine
+    container_name: engram_postgres
+    environment:
+      POSTGRES_USER: engram
+      POSTGRES_PASSWORD: engram_secret
+      POSTGRES_DB: engram
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engram"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 3. Redis — Cache + TTL ────────────────────────────
+  # Auto-expires time-sensitive memories (meetings, deadlines, etc.)
+  redis:
+    image: redis:7-alpine
+    container_name: engram_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 4. FalkorDB — Graph Database ──────────────────────
+  # Stores memory relationships: UPDATES / EXTENDS / DERIVES
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: engram_falkordb
+    ports:
+      - "6380:6379"   # exposed on 6380 to avoid Redis conflict
+    volumes:
+      - falkordb_data:/data
+    restart: unless-stopped
+
+# ── Persistent Volumes ────────────────────────────────────
+volumes:
+  qdrant_data:
+  postgres_data:
+  redis_data:
+  falkordb_data:
