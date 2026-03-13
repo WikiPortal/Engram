@@ -35,7 +35,7 @@ if __name__ == "__main__":
     ok = test_gemini()
     print()
     if ok:
-        print("✅ Gemini working. Ready for Step 4.\n")
+        print("✅ Gemini working.\n")
     else:
         print("❌ Fix your API key in backend/.env\n")
         sys.exit(1)
