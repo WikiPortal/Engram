@@ -1,6 +1,6 @@
 """
 Engram — Database Health Check
-Run after: docker compose up -d
+Run from project root: python tests/check_db.py
 Usage: python scripts/check_db.py
 """
 import sys

@@ -1,12 +1,11 @@
 """
 Engram — Gemini API Key Test
-Run from backend/ folder: python test_gemini.py
+Run from project root: python tests/test_gemini.py
 """
 import sys
 import os
-sys.path.append(".")
+sys.path.append("backend")
 
-# Load .env manually
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -21,7 +20,7 @@ def test_gemini():
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content("Reply with exactly: Engram is alive.")
         print(f"  ✅ Gemini API  — working")
         print(f"  Response: {response.text.strip()}")
