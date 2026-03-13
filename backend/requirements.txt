@@ -1,0 +1,9 @@
+# Engram — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# ── Config ────────────────────────────────────
+pydantic-settings==2.4.0
+python-dotenv==1.0.1
+
+# ── LLM ───────────────────────────────────────
+google-generativeai==0.8.3
