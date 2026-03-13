@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment — NEVER commit this
+.env
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+
+# Docker volumes
+docker/volumes/
+
+# Databases
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
