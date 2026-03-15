@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-base"
 
     # ── Memory Tuning ─────────────────────────
-    duplicate_threshold: float = 0.92
+    duplicate_threshold: float = 0.80
     graph_confidence_threshold: float = 0.85
     top_k_retrieval: int = 20
     top_k_reranked: int = 5
