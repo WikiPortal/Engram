@@ -4,21 +4,23 @@ Full pipeline wiring all components together.
 
 STORE pipeline:
   input → PII mask → extract facts → dedup check → contradiction check
-        → TTL classify → store in Qdrant
+        → TTL classify → store in Qdrant → graph link (FalkorDB)
 
 RECALL pipeline:
-  query → HyDE expand → hybrid search → TTL filter → rerank → context guard → return
+  query → HyDE expand → hybrid search → TTL filter → graph expand
+        → rerank → context guard → return
 """
 import tiktoken
 import pii
 from extractor import extract
 from dedup import is_duplicate
-from contradiction import resolve
+from contradiction import resolve, invalidate_memory
 from ttl import get_expiry, set_ttl, is_expired
 from memory import store as _store_raw, recall as _recall_raw
 from search import hybrid_search
 from reranker import rerank
 from hyde import expand
+from graph import link_memories, get_related, invalidate_edges
 from config import get_settings
 
 settings = get_settings()
@@ -37,6 +39,7 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
         "stored": 0,
         "skipped_duplicates": 0,
         "contradictions_resolved": 0,
+        "graph_edges": 0,
         "facts": []
     }
 
@@ -68,6 +71,9 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
         found, invalidated = resolve(fact_content, user_id)
         if found:
             result["contradictions_resolved"] += len(invalidated)
+            # Invalidate graph edges for superseded memories
+            for inv_id in invalidated:
+                invalidate_edges(inv_id)
 
         # Step 6 — Store in Qdrant
         memory_id = _store_raw(fact_content, user_id=user_id, tags=fact_tags)
@@ -79,6 +85,37 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
         )
         if expires_at:
             set_ttl(memory_id, expires_at)
+
+        # Step 8 — Graph linking (FalkorDB)
+        # Find semantically-close existing memories to check for relationships.
+        # Re-use the same candidates the contradiction check already found,
+        # but fetch fresh from Qdrant to get a clean list (post-invalidation).
+        try:
+            from qdrant_client import QdrantClient
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            from embedder import embedder as _embedder
+            _client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+            _vec = _embedder.embed(fact_content)
+            _nearby = _client.search(
+                collection_name=settings.qdrant_collection,
+                query_vector=_vec,
+                query_filter=Filter(must=[
+                    FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                    FieldCondition(key="is_latest", match=MatchValue(value=True)),
+                    FieldCondition(key="is_valid", match=MatchValue(value=True)),
+                ]),
+                limit=5,
+                with_payload=True,
+            )
+            candidates_for_graph = [
+                {"id": str(r.id), "content": r.payload["content"], "score": r.score}
+                for r in _nearby
+                if str(r.id) != memory_id and r.score > 0.4
+            ]
+            edges = link_memories(memory_id, fact_content, candidates_for_graph, user_id)
+            result["graph_edges"] += len(edges)
+        except Exception as e:
+            print(f"[Engram] Graph linking failed (non-critical): {e}")
 
         result["stored"] += 1
         result["facts"].append(fact_content)
@@ -106,10 +143,43 @@ def recall(query: str, user_id: str = "default") -> dict:
     # Step 3 — Filter expired TTL memories
     active = [c for c in candidates if not is_expired(c["id"])]
 
-    # Step 4 — BGE rerank
+    # Step 4 — Graph expansion (FalkorDB)
+    # For each candidate, pull in graph-connected memories not already in the list.
+    # This surfaces EXTENDS and DERIVES neighbours that pure vector search may have missed.
+    try:
+        seen_ids = {c["id"] for c in active}
+        graph_additions = []
+        for candidate in active[:5]:  # only expand top 5 to keep latency bounded
+            related = get_related(candidate["id"], user_id=user_id, depth=1)
+            for rel in related:
+                if rel["id"] not in seen_ids:
+                    # Fetch content from Qdrant for this graph neighbour
+                    from qdrant_client import QdrantClient
+                    _client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+                    hits = _client.retrieve(
+                        collection_name=settings.qdrant_collection,
+                        ids=[rel["id"]],
+                        with_payload=True,
+                    )
+                    if hits and hits[0].payload.get("is_valid") and hits[0].payload.get("is_latest"):
+                        graph_additions.append({
+                            "id": rel["id"],
+                            "content": hits[0].payload["content"],
+                            "tags": hits[0].payload.get("tags", []),
+                            "created_at": hits[0].payload.get("created_at", ""),
+                            "graph_rel": rel["rel_type"],
+                        })
+                        seen_ids.add(rel["id"])
+        if graph_additions:
+            print(f"[Engram] Graph expansion added {len(graph_additions)} neighbour(s)")
+            active = active + graph_additions
+    except Exception as e:
+        print(f"[Engram] Graph expansion failed (non-critical): {e}")
+
+    # Step 5 — BGE rerank
     reranked = rerank(query, active, top_k=settings.top_k_reranked)
 
-    # Step 5 — Context window guard (max 2000 tokens)
+    # Step 6 — Context window guard (max 2000 tokens)
     final = []
     total_tokens = 0
     for memory in reranked:

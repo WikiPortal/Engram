@@ -25,6 +25,9 @@ psycopg2-binary>=2.9.9
 # ── Redis ─────────────────────────────────────
 redis>=5.0.0
 
+# ── FalkorDB (Knowledge Graph) ────────────────
+falkordb>=1.0.0
+
 # ── Keyword Search ────────────────────────────
 rank-bm25==0.2.2
 
