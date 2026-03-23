@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engram Memory</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 300px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      background: #0f0f1a;
+      color: #e0e0ff;
+    }
+
+    .header {
+      padding: 16px;
+      border-bottom: 1px solid #2a2a4e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    .header span {
+      font-size: 11px;
+      color: #6060aa;
+    }
+
+    /* Toggle switch */
+    .toggle-row {
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #1e1e3e;
+    }
+
+    .toggle-label { color: #c0c0ee; font-size: 13px; }
+
+    .toggle {
+      position: relative;
+      width: 38px;
+      height: 22px;
+    }
+
+    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #2a2a4e;
+      border-radius: 22px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .slider::before {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 3px;
+      top: 3px;
+      background: #6060aa;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+
+    input:checked + .slider { background: #3a3a8e; }
+    input:checked + .slider::before { transform: translateX(16px); background: #8080ff; }
+
+    /* Fields */
+    .section { padding: 14px 16px; border-bottom: 1px solid #1e1e3e; }
+
+    label {
+      display: block;
+      font-size: 11px;
+      color: #6060aa;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      background: #1a1a2e;
+      border: 1px solid #2a2a4e;
+      border-radius: 6px;
+      color: #e0e0ff;
+      font-size: 13px;
+      outline: none;
+    }
+
+    input[type="text"]:focus { border-color: #5050aa; }
+
+    /* Status */
+    .status {
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #6060aa;
+      border-bottom: 1px solid #1e1e3e;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #3a3a6e;
+      flex-shrink: 0;
+    }
+
+    .dot.online { background: #40c080; }
+    .dot.offline { background: #c04040; }
+
+    /* Save button */
+    .footer { padding: 14px 16px; }
+
+    button {
+      width: 100%;
+      padding: 9px;
+      background: #3a3a8e;
+      color: #e0e0ff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button:hover { background: #5050aa; }
+    button:active { background: #2a2a7e; }
+
+    #save-msg {
+      margin-top: 8px;
+      text-align: center;
+      font-size: 12px;
+      color: #40c080;
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🧠 Engram</h1>
+  <span>Memory Layer</span>
+</div>
+
+<div class="toggle-row">
+  <span class="toggle-label">Memory injection</span>
+  <label class="toggle">
+    <input type="checkbox" id="enabled-toggle" checked>
+    <span class="slider"></span>
+  </label>
+</div>
+
+<div class="status">
+  <div class="dot" id="status-dot"></div>
+  <span id="status-text">Checking API…</span>
+</div>
+
+<div class="section">
+  <label>API URL</label>
+  <input type="text" id="api-base" value="http://localhost:8000" placeholder="http://localhost:8000">
+</div>
+
+<div class="section">
+  <label>User ID</label>
+  <input type="text" id="user-id" value="default" placeholder="default">
+</div>
+
+<div class="footer">
+  <button id="save-btn">Save settings</button>
+  <div id="save-msg"></div>
+</div>
+
+<script>
+  const apiInput   = document.getElementById("api-base");
+  const userInput  = document.getElementById("user-id");
+  const toggle     = document.getElementById("enabled-toggle");
+  const saveBtn    = document.getElementById("save-btn");
+  const saveMsg    = document.getElementById("save-msg");
+  const statusDot  = document.getElementById("status-dot");
+  const statusText = document.getElementById("status-text");
+
+  // Load saved settings
+  chrome.storage.sync.get(
+    { apiBase: "http://localhost:8000", userId: "default", enabled: true },
+    (cfg) => {
+      apiInput.value  = cfg.apiBase;
+      userInput.value = cfg.userId;
+      toggle.checked  = cfg.enabled;
+      checkHealth(cfg.apiBase);
+    }
+  );
+
+  // Check API health
+  async function checkHealth(base) {
+    try {
+      const resp = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) });
+      if (resp.ok) {
+        statusDot.className  = "dot online";
+        statusText.textContent = "API online";
+      } else {
+        throw new Error();
+      }
+    } catch {
+      statusDot.className  = "dot offline";
+      statusText.textContent = "API offline — is uvicorn running?";
+    }
+  }
+
+  // Save
+  saveBtn.addEventListener("click", () => {
+    const cfg = {
+      apiBase: apiInput.value.replace(/\/$/, ""),
+      userId:  userInput.value.trim() || "default",
+      enabled: toggle.checked,
+    };
+    chrome.storage.sync.set(cfg, () => {
+      saveMsg.textContent = "Saved ✓";
+      setTimeout(() => { saveMsg.textContent = ""; }, 2000);
+      checkHealth(cfg.apiBase);
+    });
+  });
+
+  // Re-check on API URL change
+  apiInput.addEventListener("change", () => checkHealth(apiInput.value));
+</script>
+</body>
+</html>

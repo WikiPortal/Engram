@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Engram Memory",
+  "version": "1.0.0",
+  "description": "Private AI memory layer — injects your memories into Claude and ChatGPT",
+
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "https://claude.ai/*",
+    "https://chatgpt.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Engram Memory"
+  }
+}
