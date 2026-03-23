@@ -61,7 +61,7 @@ Open `backend/.env` and set your Gemini API key:
 
 ```
 GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-3-flash-preview
 ```
 
 Everything else can stay as default for local use.

@@ -203,10 +203,10 @@ def recall(query: str, user_id: str = "default") -> dict:
 def chat(message: str, user_id: str = "default", history: list[dict] = []) -> str:
     """
     Memory-augmented chat.
-    Recalls relevant memories → injects into Gemini prompt → returns answer.
+    Recalls relevant memories → injects into prompt → returns answer.
+    Works with any configured LLM provider (Gemini, OpenAI, Anthropic, DeepSeek).
     """
-    import google.generativeai as genai
-    genai.configure(api_key=settings.gemini_api_key)
+    from llm import chat_complete
 
     # Recall relevant memories
     result = recall(message, user_id=user_id)
@@ -226,19 +226,4 @@ def chat(message: str, user_id: str = "default", history: list[dict] = []) -> st
 If memories are not relevant, answer from general knowledge.
 Be concise and helpful."""
 
-    model = genai.GenerativeModel(
-        model_name=settings.gemini_model,
-        system_instruction=system_prompt
-    )
-
-    # Build conversation history
-    gemini_history = []
-    for msg in history:
-        gemini_history.append({
-            "role": msg["role"],
-            "parts": [msg["content"]]
-        })
-
-    chat_session = model.start_chat(history=gemini_history)
-    response = chat_session.send_message(message)
-    return response.text
+    return chat_complete(system=system_prompt, history=history, message=message)

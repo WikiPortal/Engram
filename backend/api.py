@@ -95,11 +95,12 @@ def classify_error(e: Exception) -> EngramError:
         )
 
     # ── Gemini model not found ─────────────────────────────────
-    if "not found" in raw.lower() and ("model" in raw.lower() or "gemini" in raw.lower()):
+    if "not found" in raw.lower() and "model" in raw.lower():
+        from llm import get_provider, get_model
         return EngramError(
             502,
-            f"AI model '{settings.gemini_model}' not found. "
-            "Check GEMINI_MODEL in your .env — valid values: gemini-2.0-flash, gemini-1.5-flash.",
+            f"AI model '{get_model()}' not found for provider '{get_provider()}'. "
+            "Check LLM_MODEL in your .env or remove it to use the provider default.",
             "MODEL_NOT_FOUND"
         )
 
@@ -362,9 +363,11 @@ def delete_memory(memory_id: str):
 
 @app.get("/health", response_model=HealthResponse)
 def health():
+    from llm import provider_info
+    info = provider_info()
     return HealthResponse(
         status="ok",
         timestamp=datetime.utcnow().isoformat() + "Z",
-        model=settings.gemini_model,
+        model=f"{info['provider']}/{info['model']}",
         graph=get_graph_stats(),
     )

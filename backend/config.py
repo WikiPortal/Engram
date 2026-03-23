@@ -7,8 +7,18 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
 
-    # ── LLM ───────────────────────────────────
-    gemini_api_key: str
+    # ── LLM provider ──────────────────────────────
+    # Which provider to use: gemini | openai | anthropic | deepseek
+    llm_provider: str = "gemini"
+    # Model override — if empty, provider default is used
+    llm_model: str = ""
+
+    gemini_api_key: str = ""
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    deepseek_api_key: str = ""
+
+    # Legacy — kept for backwards compatibility
     gemini_model: str = "gemini-3-flash-preview"
 
     # ── PostgreSQL ────────────────────────────

@@ -7,6 +7,9 @@ python-dotenv==1.0.1
 
 # ── LLM ───────────────────────────────────────
 google-generativeai==0.8.3
+# openai>=1.30.0
+# Anthropic / Claude
+# anthropic>=0.34.0
 
 # ── Embeddings (local) ────────────────────────
 sentence-transformers==3.1.1

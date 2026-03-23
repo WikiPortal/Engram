@@ -19,12 +19,11 @@ Usage:
 """
 
 import json
-import google.generativeai as genai
 from falkordb import FalkorDB
+from llm import complete
 from config import get_settings
 
 settings = get_settings()
-genai.configure(api_key=settings.gemini_api_key)
 
 GRAPH_NAME = "engram"
 
@@ -86,19 +85,16 @@ def ensure_node(memory_id: str, user_id: str = "default") -> bool:
 
 def _classify_relationship(old_content: str, new_content: str) -> dict:
     """
-    Ask Gemini to classify the relationship between two memory facts.
+    Ask the configured LLM to classify the relationship between two memory facts.
     Returns dict with relationship, confidence, reason.
     Falls back to NONE on any failure.
     """
-    model = genai.GenerativeModel(
-        model_name=settings.gemini_model,
-        system_instruction=CLASSIFY_PROMPT
-    )
     try:
-        response = model.generate_content(
-            f"Old memory: {old_content}\n\nNew memory: {new_content}"
+        raw = complete(
+            system=CLASSIFY_PROMPT,
+            user=f"Old memory: {old_content}\n\nNew memory: {new_content}"
         )
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
         return {
             "relationship": data.get("relationship", "NONE"),
