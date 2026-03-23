@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { api, Memory } from "@/lib/api";
+import { api, Memory, friendlyError, EngramApiError } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -12,6 +12,7 @@ interface Message {
   content: string;
   memoriesUsed?: number;
   isThinking?: boolean;
+  isError?: boolean;
 }
 type Tab = "chat" | "memories" | "onboarding";
 
@@ -162,14 +163,16 @@ export default function Home() {
         )
       );
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
+      const msg = friendlyError(e);
+      const isQuota = e instanceof EngramApiError && (e.code === "QUOTA_RPM" || e.code === "QUOTA_DAILY");
       setMessages((prev) =>
         prev.map((m) =>
           m.id === thinkingMsg.id
-            ? { ...m, content: `Error: ${msg}`, isThinking: false }
+            ? { ...m, content: msg, isThinking: false, isError: true }
             : m
         )
       );
+      if (isQuota) setSending(false);
     } finally {
       setSending(false);
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -305,6 +308,11 @@ export default function Home() {
                     <div className="bg-ink-800 border border-ink-700 rounded-2xl rounded-tl-sm px-4 py-3 text-ink-100 text-sm">
                       {msg.isThinking ? (
                         <ThinkingBubble />
+                      ) : msg.isError ? (
+                        <div className="flex items-start gap-2.5">
+                          <span className="text-ember-400 mt-0.5 shrink-0">⚠</span>
+                          <p className="text-ember-300 text-sm leading-relaxed">{msg.content}</p>
+                        </div>
                       ) : (
                         <div
                           className="prose-engram"

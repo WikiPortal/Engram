@@ -33,7 +33,24 @@ export interface ChatResult {
 export interface HealthResult {
   status: string;
   timestamp: string;
+  model: string;
   graph: { nodes: number; edges: number; updates: number; extends: number; derives: number };
+}
+
+export interface ApiError {
+  error: string;  
+  code: string;    
+  status: number;
+}
+
+export class EngramApiError extends Error {
+  code: string;
+  status: number;
+  constructor(err: ApiError) {
+    super(err.error);
+    this.code = err.code;
+    this.status = err.status;
+  }
 }
 
 async function post<T>(path: string, body: object): Promise<T> {
@@ -43,16 +60,33 @@ async function post<T>(path: string, body: object): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? `HTTP ${res.status}`);
+    const payload = await res.json().catch(() => null);
+    if (payload && payload.error && payload.code) {
+      throw new EngramApiError(payload as ApiError);
+    }
+    throw new EngramApiError({
+      error: payload?.detail ?? `Request failed (${res.status})`,
+      code: "UNKNOWN",
+      status: res.status,
+    });
   }
   return res.json();
 }
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    if (payload && payload.error) throw new EngramApiError(payload as ApiError);
+    throw new EngramApiError({ error: `HTTP ${res.status}`, code: "HTTP_ERROR", status: res.status });
+  }
   return res.json();
+}
+
+export function friendlyError(e: unknown): string {
+  if (e instanceof EngramApiError) return e.message;
+  if (e instanceof Error) return e.message;
+  return "Something went wrong. Please try again.";
 }
 
 export const api = {

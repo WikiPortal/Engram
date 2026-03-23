@@ -10,18 +10,17 @@ Engram — FastAPI Server
 
 Run:
   cd backend
-  uvicorn api:app --host 0.0.0.0 --port 8000 --reload
-
-  Or from project root:
-  uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
+  python -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 """
 
 import sys
 import os
+import re
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
@@ -29,7 +28,6 @@ from datetime import datetime
 import brain
 from contradiction import invalidate_memory
 from graph import get_graph_stats
-from memory import recall as _raw_recall
 from config import get_settings
 
 settings = get_settings()
@@ -44,10 +42,128 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten this for production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Error classifier ──────────────────────────────────────────────
+
+class EngramError(Exception):
+    """Structured error with HTTP status and clean user message."""
+    def __init__(self, status_code: int, message: str, detail: str = ""):
+        self.status_code = status_code
+        self.message = message
+        self.detail = detail
+        super().__init__(message)
+
+
+def classify_error(e: Exception) -> EngramError:
+    """
+    Turn any exception into a clean EngramError with a human-readable message.
+    Handles Gemini quota errors, connection failures, and generic errors.
+    """
+    raw = str(e)
+
+    # ── Gemini / LLM quota errors ──────────────────────────────
+    if "429" in raw or "quota" in raw.lower() or "rate" in raw.lower():
+        # Try to extract retry delay
+        retry_match = re.search(r'retry.*?(\d+)\s*s', raw, re.IGNORECASE)
+        retry_hint = ""
+        if retry_match:
+            secs = int(retry_match.group(1))
+            if secs < 60:
+                retry_hint = f" Try again in {secs} seconds."
+            else:
+                mins = round(secs / 60)
+                retry_hint = f" Try again in ~{mins} minute{'s' if mins != 1 else ''}."
+
+        # Daily vs per-minute quota
+        if "per_day" in raw.lower() or "PerDay" in raw or "daily" in raw.lower():
+            return EngramError(
+                429,
+                f"Daily AI quota reached.{retry_hint} The free Gemini tier allows 20 requests/day. "
+                "Update GEMINI_MODEL in .env to use a different model, or wait until midnight PT for reset.",
+                "QUOTA_DAILY"
+            )
+        return EngramError(
+            429,
+            f"AI rate limit hit.{retry_hint} The free Gemini tier allows 5 requests/minute. "
+            "Wait a moment and try again.",
+            "QUOTA_RPM"
+        )
+
+    # ── Gemini model not found ─────────────────────────────────
+    if "not found" in raw.lower() and ("model" in raw.lower() or "gemini" in raw.lower()):
+        return EngramError(
+            502,
+            f"AI model '{settings.gemini_model}' not found. "
+            "Check GEMINI_MODEL in your .env — valid values: gemini-2.0-flash, gemini-1.5-flash.",
+            "MODEL_NOT_FOUND"
+        )
+
+    # ── Gemini auth error ──────────────────────────────────────
+    if "api_key" in raw.lower() or "401" in raw or "403" in raw or "invalid" in raw.lower() and "key" in raw.lower():
+        return EngramError(
+            401,
+            "Gemini API key is invalid or missing. Set GEMINI_API_KEY in backend/.env.",
+            "AUTH_ERROR"
+        )
+
+    # ── Database / connection errors ───────────────────────────
+    if "connection refused" in raw.lower() or "connect" in raw.lower() and ("qdrant" in raw.lower() or "redis" in raw.lower() or "postgres" in raw.lower()):
+        return EngramError(
+            503,
+            "Cannot reach one or more databases. Make sure Docker is running: docker compose up -d",
+            "DB_UNAVAILABLE"
+        )
+
+    if "qdrant" in raw.lower():
+        return EngramError(503, "Vector database (Qdrant) is unavailable. Run: docker compose up -d", "QDRANT_DOWN")
+
+    if "redis" in raw.lower():
+        return EngramError(503, "Cache database (Redis) is unavailable. Run: docker compose up -d", "REDIS_DOWN")
+
+    if "psycopg2" in raw.lower() or "postgres" in raw.lower():
+        return EngramError(503, "PostgreSQL database is unavailable. Run: docker compose up -d", "POSTGRES_DOWN")
+
+    # ── Gemini content blocked ─────────────────────────────────
+    if "safety" in raw.lower() or "blocked" in raw.lower() or "SAFETY" in raw:
+        return EngramError(
+            422,
+            "The AI blocked this message due to safety filters. Try rephrasing.",
+            "CONTENT_BLOCKED"
+        )
+
+    # ── JSON parse errors from LLM responses ──────────────────
+    if "json" in raw.lower() and ("decode" in raw.lower() or "parse" in raw.lower()):
+        return EngramError(
+            502,
+            "The AI returned an unexpected response format. This is usually transient — try again.",
+            "LLM_PARSE_ERROR"
+        )
+
+    # ── Generic fallback ───────────────────────────────────────
+    return EngramError(500, f"An unexpected error occurred: {raw[:200]}", "INTERNAL_ERROR")
+
+
+@app.exception_handler(EngramError)
+async def engram_error_handler(request: Request, exc: EngramError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.message,
+            "code": exc.detail,
+            "status": exc.status_code,
+        }
+    )
+
+
+def handle(e: Exception) -> None:
+    """Classify and raise as EngramError. Call from every except block."""
+    err = classify_error(e)
+    raise err
 
 
 # ── Request / Response models ─────────────────────────────────────
@@ -78,7 +194,7 @@ class MemoryItem(BaseModel):
     rerank_score: Optional[float] = None
     tags: list[str] = []
     created_at: Optional[str] = None
-    graph_rel: Optional[str] = None     # set when result came from graph expansion
+    graph_rel: Optional[str] = None
 
 
 class RecallResponse(BaseModel):
@@ -91,10 +207,7 @@ class RecallResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="User message")
     user_id: str = Field("default")
-    history: list[dict] = Field(
-        default_factory=list,
-        description='Conversation history: [{"role": "user"|"model", "content": "..."}]'
-    )
+    history: list[dict] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
@@ -114,6 +227,7 @@ class MemoryListItem(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     timestamp: str
+    model: str
     graph: dict
 
 
@@ -121,26 +235,19 @@ class HealthResponse(BaseModel):
 
 @app.post("/memory/store", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
 def store_memory(req: StoreRequest):
-    """
-    Run the full ingestion pipeline on raw text.
-    Extracts atomic facts, deduplicates, resolves contradictions,
-    sets TTL, and links in the knowledge graph.
-    """
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content cannot be empty")
     try:
         result = brain.remember(req.content, user_id=req.user_id, tags=req.tags)
         return StoreResponse(**result)
+    except EngramError:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        handle(e)
 
 
 @app.post("/memory/recall", response_model=RecallResponse)
 def recall_memories(req: RecallRequest):
-    """
-    Run the full retrieval pipeline.
-    HyDE expansion → hybrid search → graph expansion → rerank → context guard.
-    """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query cannot be empty")
     try:
@@ -152,40 +259,35 @@ def recall_memories(req: RecallRequest):
             total_found=result["total_found"],
             context_tokens=result["context_tokens"],
         )
+    except EngramError:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        handle(e)
 
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    """
-    Memory-augmented chat.
-    1. Recall relevant memories (for context + badge count)
-    2. Generate response via Gemini
-    3. Restore PII tokens in the response so the user sees real names
-    4. Store the conversation turn as a new memory (fire-and-forget)
-    """
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     try:
         import pii as _pii
         import threading
 
-        # Step 1 — recall count for badge
+        # Recall count for badge
         recall_result = brain.recall(req.message, user_id=req.user_id)
         memories_used = len(recall_result["memories"])
 
-        # Step 2 — generate response
+        # Generate response
         response_text = brain.chat(
             req.message,
             user_id=req.user_id,
             history=req.history,
         )
 
-        # Step 3 — restore PII tokens so user sees real names
+        # Restore PII tokens
         response_text = _pii.restore(response_text)
 
-        # Step 4 — store turn as memory (background thread, non-blocking)
+        # Store turn as memory (background, non-blocking)
         def _store_turn():
             try:
                 turn = f"User: {req.message}\nAssistant: {response_text}"
@@ -196,23 +298,21 @@ def chat(req: ChatRequest):
         threading.Thread(target=_store_turn, daemon=True).start()
 
         return ChatResponse(response=response_text, memories_used=memories_used)
+
+    except EngramError:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        handle(e)
 
 
 @app.get("/memory/list/{user_id}", response_model=list[MemoryListItem])
 def list_memories(user_id: str, limit: int = 50):
-    """
-    List all valid memories for a user, most recent first.
-    Query param: limit (default 50, max 500).
-    """
     limit = min(limit, 500)
     try:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Filter, FieldCondition, MatchValue
 
         client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
-
         existing = [c.name for c in client.get_collections().collections]
         if settings.qdrant_collection not in existing:
             return []
@@ -240,38 +340,31 @@ def list_memories(user_id: str, limit: int = 50):
             )
             for r in results
         ]
-
-        # Sort by created_at descending (most recent first)
         memories.sort(key=lambda m: m.created_at or "", reverse=True)
         return memories
 
+    except EngramError:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        handle(e)
 
 
 @app.delete("/memory/{memory_id}", status_code=status.HTTP_200_OK)
 def delete_memory(memory_id: str):
-    """
-    Soft-delete (invalidate) a memory.
-    Marks is_valid=False, is_latest=False in Qdrant.
-    Logs to PostgreSQL audit trail.
-    Paper note: prefer invalidation over hard delete to preserve audit history.
-    """
     try:
         invalidate_memory(memory_id, reason="User-requested deletion via API")
         return {"memory_id": memory_id, "status": "invalidated"}
+    except EngramError:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        handle(e)
 
 
 @app.get("/health", response_model=HealthResponse)
 def health():
-    """
-    Service health check.
-    Returns status, timestamp, and graph stats for the default user.
-    """
     return HealthResponse(
         status="ok",
         timestamp=datetime.utcnow().isoformat() + "Z",
+        model=settings.gemini_model,
         graph=get_graph_stats(),
     )
