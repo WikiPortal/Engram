@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS pii_vault (
 -- When new memory conflicts with old one, logged here
 CREATE TABLE IF NOT EXISTS contradiction_flags (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    new_memory_id         UUID REFERENCES memories(id),
-    conflicting_memory_id UUID REFERENCES memories(id),
+    new_memory_id         TEXT,
+    conflicting_memory_id TEXT,
     reason                TEXT,
     resolved              BOOLEAN DEFAULT FALSE,
     created_at            TIMESTAMPTZ DEFAULT NOW()
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS contradiction_flags (
 -- Full history of every memory action — never lose data
 CREATE TABLE IF NOT EXISTS audit_log (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    memory_id  UUID REFERENCES memories(id),
+    memory_id  TEXT,
     action     VARCHAR(50),   -- CREATED | INVALIDATED | CONSOLIDATED | EXPIRED
     reason     TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -54,3 +54,5 @@ CREATE INDEX IF NOT EXISTS idx_memories_user    ON memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_valid   ON memories(is_latest, is_valid);
 CREATE INDEX IF NOT EXISTS idx_memories_ttl     ON memories(ttl_expires_at);
 CREATE INDEX IF NOT EXISTS idx_memories_type    ON memories(type);
+CREATE INDEX IF NOT EXISTS idx_audit_memory_id  ON audit_log(memory_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_log(action);

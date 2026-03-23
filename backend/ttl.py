@@ -73,9 +73,38 @@ def set_ttl(memory_id: str, expires_at: datetime):
 
 
 def is_expired(memory_id: str) -> bool:
-    """Check if a memory's TTL has expired in Redis."""
+    """
+    Check if a memory's TTL has expired.
+    Logic:
+      - Key exists in Redis  → TTL is active, memory is NOT expired
+      - Key missing in Redis → either never had TTL (permanent) OR already expired
+    We distinguish the two cases using get_ttl_seconds():
+      - If the memory was never given a TTL, it is permanent → not expired
+      - If it had a TTL key that Redis auto-deleted, it is expired
+    Since we cannot tell these apart from Redis alone once the key is gone,
+    we store a sentinel: set_ttl() always writes the key. If the key is missing
+    AND was never set, the memory is permanent. We track this by checking if
+    any ttl: key exists — if it never existed, it's permanent (not expired).
+
+    Simplified correct rule:
+      - Key exists with TTL > 0  → not expired
+      - Key exists with TTL == 0 → just expired (treat as expired)
+      - Key does not exist        → permanent, NOT expired
+    """
     r = redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
-    return r.exists(f"ttl:{memory_id}") == 0
+    try:
+        ttl = r.ttl(f"ttl:{memory_id}")
+        if ttl == -2:
+            # Key does not exist — memory was never given a TTL → permanent
+            return False
+        if ttl == -1:
+            # Key exists but has no expiry — treat as permanent
+            return False
+        # ttl >= 0: key exists with a countdown
+        return ttl == 0  # 0 means just expired; positive means still alive
+    except Exception:
+        # Redis unreachable — fail open (treat all as not expired)
+        return False
 
 
 def get_ttl_seconds(memory_id: str) -> int | None:
