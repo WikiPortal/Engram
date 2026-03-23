@@ -160,20 +160,41 @@ def recall_memories(req: RecallRequest):
 def chat(req: ChatRequest):
     """
     Memory-augmented chat.
-    Recalls relevant memories → injects into Gemini prompt → returns answer.
+    1. Recall relevant memories (for context + badge count)
+    2. Generate response via Gemini
+    3. Restore PII tokens in the response so the user sees real names
+    4. Store the conversation turn as a new memory (fire-and-forget)
     """
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     try:
-        # Get memories used count before chat
+        import pii as _pii
+        import threading
+
+        # Step 1 — recall count for badge
         recall_result = brain.recall(req.message, user_id=req.user_id)
         memories_used = len(recall_result["memories"])
 
+        # Step 2 — generate response
         response_text = brain.chat(
             req.message,
             user_id=req.user_id,
             history=req.history,
         )
+
+        # Step 3 — restore PII tokens so user sees real names
+        response_text = _pii.restore(response_text)
+
+        # Step 4 — store turn as memory (background thread, non-blocking)
+        def _store_turn():
+            try:
+                turn = f"User: {req.message}\nAssistant: {response_text}"
+                brain.remember(turn, user_id=req.user_id, tags=["conversation"])
+            except Exception as e:
+                print(f"[Engram] Background store failed (non-critical): {e}")
+
+        threading.Thread(target=_store_turn, daemon=True).start()
+
         return ChatResponse(response=response_text, memories_used=memories_used)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
