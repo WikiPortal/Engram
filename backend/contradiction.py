@@ -7,9 +7,8 @@ When new fact contradicts existing memory:
   4. New fact gets stored as the authoritative version
 stale/conflicting facts poisoning recall results.
 """
-import psycopg2
+from db import get_pg, get_qdrant
 from datetime import datetime
-from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from embedder import embedder
 from config import get_settings
@@ -18,13 +17,7 @@ settings = get_settings()
 
 
 def _pg_conn():
-    return psycopg2.connect(
-        host=settings.postgres_host,
-        port=settings.postgres_port,
-        dbname=settings.postgres_db,
-        user=settings.postgres_user,
-        password=settings.postgres_password
-    )
+    return get_pg()
 
 
 def invalidate_memory(memory_id: str, reason: str = ""):
@@ -32,7 +25,7 @@ def invalidate_memory(memory_id: str, reason: str = ""):
     Mark a memory as no longer valid in Qdrant.
     Logs the action in PostgreSQL audit_log.
     """
-    client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    client = get_qdrant()
 
     # Mark invalid in Qdrant
     client.set_payload(
@@ -69,7 +62,7 @@ def find_conflicting(new_content: str, user_id: str = "default") -> list[dict]:
     These are candidates for contradiction checking.
     Returns top 5 similar valid memories.
     """
-    client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    client = get_qdrant()
 
     existing = [c.name for c in client.get_collections().collections]
     if settings.qdrant_collection not in existing:

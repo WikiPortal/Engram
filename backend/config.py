@@ -3,14 +3,20 @@ Engram — Core Configuration
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
+
+def _find_env() -> str:
+    root_env    = Path(__file__).parent.parent / ".env"
+    backend_env = Path(__file__).parent / ".env"
+    if root_env.exists():
+        return str(root_env)
+    return str(backend_env)
 
 
 class Settings(BaseSettings):
 
     # ── LLM provider ──────────────────────────────
-    # Which provider to use: gemini | openai | anthropic | deepseek
     llm_provider: str = "gemini"
-    # Model override — if empty, provider default is used
     llm_model: str = ""
 
     gemini_api_key: str = ""
@@ -58,6 +64,9 @@ class Settings(BaseSettings):
     # ── App ───────────────────────────────────
     app_port: int = 8000
 
+    # ── Auth ──────────────────────────────────────
+    auth_secret: str = "engram-change-this-secret-in-production"
+
     @property
     def postgres_dsn(self) -> str:
         return (
@@ -70,7 +79,7 @@ class Settings(BaseSettings):
         return f"redis://{self.redis_host}:{self.redis_port}"
 
     class Config:
-        env_file = ".env"
+        env_file = _find_env()
         extra = "ignore"
 
 

@@ -94,7 +94,7 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
             from qdrant_client import QdrantClient
             from qdrant_client.models import Filter, FieldCondition, MatchValue
             from embedder import embedder as _embedder
-            _client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+            _client = get_qdrant()
             _vec = _embedder.embed(fact_content)
             _nearby = _client.search(
                 collection_name=settings.qdrant_collection,
@@ -155,7 +155,7 @@ def recall(query: str, user_id: str = "default") -> dict:
                 if rel["id"] not in seen_ids:
                     # Fetch content from Qdrant for this graph neighbour
                     from qdrant_client import QdrantClient
-                    _client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+                    _client = get_qdrant()
                     hits = _client.retrieve(
                         collection_name=settings.qdrant_collection,
                         ids=[rel["id"]],

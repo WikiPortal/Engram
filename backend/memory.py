@@ -4,6 +4,7 @@ Basic version: store → embed → Qdrant | recall → embed → search
 """
 import uuid
 from datetime import datetime
+from db import get_qdrant
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct,
@@ -16,7 +17,7 @@ settings = get_settings()
 
 
 def _get_client() -> QdrantClient:
-    return QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    return get_qdrant()
 
 
 def _ensure_collection(client: QdrantClient):

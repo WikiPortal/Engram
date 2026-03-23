@@ -4,6 +4,7 @@ Combines BM25 keyword search + vector similarity search.
 Merges results via Reciprocal Rank Fusion (RRF).
 Semantic drift — pure vector misses exact terms.
 """
+from db import get_qdrant
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from rank_bm25 import BM25Okapi
@@ -15,7 +16,7 @@ settings = get_settings()
 
 def _get_all_memories(user_id: str) -> list[dict]:
     """Fetch all valid memories for BM25 corpus."""
-    client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    client = get_qdrant()
 
     existing = [c.name for c in client.get_collections().collections]
     if settings.qdrant_collection not in existing:
@@ -46,7 +47,7 @@ def _get_all_memories(user_id: str) -> list[dict]:
 
 def _vector_search(query: str, user_id: str, top_k: int) -> list[dict]:
     """Dense vector similarity search via Qdrant."""
-    client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    client = get_qdrant()
     query_vector = embedder.embed(query)
 
     results = client.search(

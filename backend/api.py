@@ -320,10 +320,10 @@ def list_memories(user_id: str, limit: int = 50, current_user: dict = Depends(ge
         raise HTTPException(403, "Cannot access another user's memories")
     limit = min(limit, 500)
     try:
-        from qdrant_client import QdrantClient
+        from db import get_qdrant
         from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-        client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+        client = get_qdrant()
         existing = [c.name for c in client.get_collections().collections]
         if settings.qdrant_collection not in existing:
             return []

@@ -5,7 +5,7 @@ Real values persisted in PostgreSQL pii_vault table.
 In-memory cache layer avoids redundant DB reads.
 """
 import uuid
-import psycopg2
+from db import get_pg
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
@@ -36,13 +36,7 @@ PII_ENTITIES = [
 
 
 def _pg_conn():
-    return psycopg2.connect(
-        host=settings.postgres_host,
-        port=settings.postgres_port,
-        dbname=settings.postgres_db,
-        user=settings.postgres_user,
-        password=settings.postgres_password,
-    )
+    return get_pg()
 
 
 def _save_to_db(token: str, original: str, pii_type: str):

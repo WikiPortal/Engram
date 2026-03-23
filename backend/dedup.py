@@ -4,7 +4,7 @@ Before storing a fact, check if semantically identical memory exists.
 Threshold: 0.92 cosine similarity → considered duplicate, skip storage.
 Edge case handled: bloated memory store from redundant facts.
 """
-from qdrant_client import QdrantClient
+from db import get_qdrant
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from embedder import embedder
 from config import get_settings
@@ -18,7 +18,7 @@ def is_duplicate(content: str, user_id: str = "default") -> tuple[bool, str, flo
     Returns (is_dup, matching_content, similarity_score)
     Returns (False, "", 0.0) if no duplicate found.
     """
-    client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    client = get_qdrant()
 
     # Check collection exists
     existing = [c.name for c in client.get_collections().collections]

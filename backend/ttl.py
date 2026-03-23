@@ -4,7 +4,7 @@ Detects time-sensitive facts and sets Redis TTL for auto-expiry.
 Stale memories like "meeting tomorrow" poisoning recall forever.
 """
 import re
-import redis
+from db import get_redis
 from datetime import datetime, timedelta, timezone
 from config import get_settings
 
@@ -66,7 +66,7 @@ def get_expiry(content: str, is_temporary_hint: bool = None) -> datetime | None:
 
 def set_ttl(memory_id: str, expires_at: datetime):
     """Store expiry in Redis. Redis auto-deletes the key when TTL runs out."""
-    r = redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
+    r = get_redis()
     ttl_seconds = int((expires_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds())
     r.setex(f"ttl:{memory_id}", ttl_seconds, expires_at.isoformat())
     print(f"[Engram] TTL set [{memory_id[:8]}]: expires in {ttl_seconds}s ({expires_at.strftime('%Y-%m-%d %H:%M')} UTC)")
@@ -91,7 +91,7 @@ def is_expired(memory_id: str) -> bool:
       - Key exists with TTL == 0 → just expired (treat as expired)
       - Key does not exist        → permanent, NOT expired
     """
-    r = redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
+    r = get_redis()
     try:
         ttl = r.ttl(f"ttl:{memory_id}")
         if ttl == -2:
@@ -109,7 +109,7 @@ def is_expired(memory_id: str) -> bool:
 
 def get_ttl_seconds(memory_id: str) -> int | None:
     """Get remaining TTL in seconds. None if no TTL set (permanent)."""
-    r = redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
+    r = get_redis()
     ttl = r.ttl(f"ttl:{memory_id}")
     if ttl == -2:
         return None   # key doesn't exist — either expired or never had TTL

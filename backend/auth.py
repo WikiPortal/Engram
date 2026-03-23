@@ -18,7 +18,7 @@ import hmac
 import base64
 import json
 import time
-import psycopg2
+from db import get_pg
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -97,11 +97,7 @@ def verify_password(password: str, stored: str) -> bool:
 # ── DB helpers ────────────────────────────────────────────────────
 
 def _pg():
-    return psycopg2.connect(
-        host=settings.postgres_host, port=settings.postgres_port,
-        dbname=settings.postgres_db, user=settings.postgres_user,
-        password=settings.postgres_password,
-    )
+    return get_pg()
 
 
 # ── Dependency: get current user from JWT ─────────────────────────
