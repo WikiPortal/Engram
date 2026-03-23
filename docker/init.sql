@@ -1,7 +1,19 @@
 -- Engram — PostgreSQL Schema
--- Auto-runs on first docker compose up
 
--- ── Memories ──────────────────────────────────────────────
+-- ── Users ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email         VARCHAR(255) UNIQUE NOT NULL,
+    username      VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    last_login    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email    ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+-- ── Memories ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS memories (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     content       TEXT NOT NULL,
@@ -18,18 +30,16 @@ CREATE TABLE IF NOT EXISTS memories (
     invalid_at    TIMESTAMPTZ
 );
 
--- ── PII Vault ─────────────────────────────────────────────
--- Real PII values stored here, tokens used everywhere else
+-- ── PII Vault ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS pii_vault (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    token         VARCHAR(100) UNIQUE NOT NULL,
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token          VARCHAR(100) UNIQUE NOT NULL,
     original_value TEXT NOT NULL,
-    pii_type      VARCHAR(50),
-    created_at    TIMESTAMPTZ DEFAULT NOW()
+    pii_type       VARCHAR(50),
+    created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Contradiction Flags ───────────────────────────────────
--- When new memory conflicts with old one, logged here
+-- ── Contradiction Flags ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS contradiction_flags (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     new_memory_id         TEXT,
@@ -39,17 +49,16 @@ CREATE TABLE IF NOT EXISTS contradiction_flags (
     created_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Audit Log ─────────────────────────────────────────────
--- Full history of every memory action — never lose data
+-- ── Audit Log ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_log (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     memory_id  TEXT,
-    action     VARCHAR(50),   -- CREATED | INVALIDATED | CONSOLIDATED | EXPIRED
+    action     VARCHAR(50),
     reason     TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Indexes ───────────────────────────────────────────────
+-- ── Indexes ────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_memories_user    ON memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_valid   ON memories(is_latest, is_valid);
 CREATE INDEX IF NOT EXISTS idx_memories_ttl     ON memories(ttl_expires_at);

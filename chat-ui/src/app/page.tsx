@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api, Memory, friendlyError, EngramApiError } from "@/lib/api";
+import { getUser, logout, isLoggedIn, type User } from "@/lib/auth";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -98,7 +99,8 @@ function MemoryBadge({ count }: { count: number }) {
 // ── Main component ────────────────────────────────────────────────
 
 export default function Home() {
-  const [userId] = useState("default");
+  const [user, setUser] = useState<User | null>(null);
+  const userId = user?.user_id ?? "default";
   const [tab, setTab] = useState<Tab>("chat");
   const [online, setOnline] = useState<boolean | null>(null);
   const [graphStats, setGraphStats] = useState({ nodes: 0, edges: 0 });
@@ -124,6 +126,14 @@ export default function Home() {
   // ── Init ───────────────────────────────────────────────────────
 
   useEffect(() => {
+    // Redirect to auth if not logged in
+    const currentUser = getUser();
+    if (!currentUser || !isLoggedIn()) {
+      window.location.href = "/auth";
+      return;
+    }
+    setUser(currentUser);
+
     api.health()
       .then((h) => {
         setOnline(true);
@@ -256,6 +266,19 @@ export default function Home() {
             <Dot online={online} />
             <span>{online === null ? "connecting" : online ? "online" : "offline"}</span>
           </div>
+          {/* User + logout */}
+          {user && (
+            <div className="flex items-center gap-2 border-l border-ink-700 pl-4">
+              <span className="text-xs text-ink-400 hidden sm:block">{user.username}</span>
+              <button
+                onClick={logout}
+                className="text-xs text-ink-500 hover:text-ember-400 transition-colors px-2 py-1 rounded-lg hover:bg-ink-800"
+                title="Sign out"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

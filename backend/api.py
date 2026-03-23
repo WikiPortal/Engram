@@ -18,7 +18,7 @@ import os
 import re
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -29,6 +29,7 @@ import brain
 from contradiction import invalidate_memory
 from graph import get_graph_stats
 from config import get_settings
+from auth import router as auth_router, get_optional_user
 
 settings = get_settings()
 
@@ -46,6 +47,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth routes: /auth/register, /auth/login, /auth/me
+app.include_router(auth_router)
 
 
 # ── Error classifier ──────────────────────────────────────────────
@@ -235,11 +239,12 @@ class HealthResponse(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @app.post("/memory/store", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
-def store_memory(req: StoreRequest):
+def store_memory(req: StoreRequest, current_user: dict = Depends(get_optional_user)):
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content cannot be empty")
+    user_id = current_user["sub"] if current_user else req.user_id
     try:
-        result = brain.remember(req.content, user_id=req.user_id, tags=req.tags)
+        result = brain.remember(req.content, user_id=user_id, tags=req.tags)
         return StoreResponse(**result)
     except EngramError:
         raise
@@ -248,11 +253,12 @@ def store_memory(req: StoreRequest):
 
 
 @app.post("/memory/recall", response_model=RecallResponse)
-def recall_memories(req: RecallRequest):
+def recall_memories(req: RecallRequest, current_user: dict = Depends(get_optional_user)):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query cannot be empty")
+    user_id = current_user["sub"] if current_user else req.user_id
     try:
-        result = brain.recall(req.query, user_id=req.user_id)
+        result = brain.recall(req.query, user_id=user_id)
         memories = [MemoryItem(**m) for m in result["memories"]]
         return RecallResponse(
             query=result["query"],
@@ -267,21 +273,23 @@ def recall_memories(req: RecallRequest):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, current_user: dict = Depends(get_optional_user)):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     try:
         import pii as _pii
         import threading
 
+        user_id = current_user["sub"] if current_user else req.user_id
+
         # Recall count for badge
-        recall_result = brain.recall(req.message, user_id=req.user_id)
+        recall_result = brain.recall(req.message, user_id=user_id)
         memories_used = len(recall_result["memories"])
 
         # Generate response
         response_text = brain.chat(
             req.message,
-            user_id=req.user_id,
+            user_id=user_id,
             history=req.history,
         )
 
@@ -292,7 +300,7 @@ def chat(req: ChatRequest):
         def _store_turn():
             try:
                 turn = f"User: {req.message}\nAssistant: {response_text}"
-                brain.remember(turn, user_id=req.user_id, tags=["conversation"])
+                brain.remember(turn, user_id=user_id, tags=["conversation"])
             except Exception as e:
                 print(f"[Engram] Background store failed (non-critical): {e}")
 
@@ -307,7 +315,9 @@ def chat(req: ChatRequest):
 
 
 @app.get("/memory/list/{user_id}", response_model=list[MemoryListItem])
-def list_memories(user_id: str, limit: int = 50):
+def list_memories(user_id: str, limit: int = 50, current_user: dict = Depends(get_optional_user)):
+    if current_user and current_user["sub"] != user_id:
+        raise HTTPException(403, "Cannot access another user's memories")
     limit = min(limit, 500)
     try:
         from qdrant_client import QdrantClient

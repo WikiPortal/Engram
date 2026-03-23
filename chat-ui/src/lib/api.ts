@@ -53,10 +53,19 @@ export class EngramApiError extends Error {
   }
 }
 
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("engram_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function post<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -74,7 +83,7 @@ async function post<T>(path: string, body: object): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`);
+  const res = await fetch(`${API}${path}`, { headers: authHeaders() });
   if (!res.ok) {
     const payload = await res.json().catch(() => null);
     if (payload && payload.error) throw new EngramApiError(payload as ApiError);
