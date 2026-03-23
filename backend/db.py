@@ -30,6 +30,16 @@ Usage in any backend module:
 """
 
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+_root_env = Path(__file__).parent.parent / ".env"
+_backend_env = Path(__file__).parent / ".env"
+if _root_env.exists():
+    load_dotenv(str(_root_env), override=False)
+elif _backend_env.exists():
+    load_dotenv(str(_backend_env), override=False)
+
 import psycopg2
 from qdrant_client import QdrantClient
 import redis as redis_lib
