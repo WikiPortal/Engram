@@ -2,19 +2,19 @@
 
 Engram is a fully private, self-hosted AI memory layer. It remembers your conversations, notes, and documents and makes that knowledge available in every AI interaction you have.
 
-Everything runs locally. Zero cloud. Zero cost.
-
 ---
 
 ## What it does
 
 - Extracts atomic facts from anything you tell it
 - Deduplicates, contradiction-checks, and auto-expires time-sensitive memories
-- Retrieves relevant memories using hybrid search (BM25 + vector + reranker)
-- Injects memories as context into every chat response
+- Retrieves memories using hybrid search (BM25 + vector + reranker + HyDE)
+- Injects relevant memories as context into every chat response
 - Masks PII before storage, restores it on display
-- Builds a knowledge graph of relationships between memories
+- Builds a knowledge graph of relationships between memories (UPDATES / EXTENDS / DERIVES)
+- Works with any LLM — Gemini, OpenAI, Claude, DeepSeek
 - Chrome extension that works transparently on claude.ai and ChatGPT
+- Auth — sign up, sign in, each user gets their own isolated memory namespace
 
 ---
 
@@ -22,9 +22,8 @@ Everything runs locally. Zero cloud. Zero cost.
 
 - Python 3.11+
 - Node.js 18+
-- Docker Desktop
-- Google Gemini API key (free at [aistudio.google.com](https://aistudio.google.com))
-- Chrome (for the extension)
+- Docker Desktop (for local databases)
+- An API key for your chosen LLM provider
 
 ---
 
@@ -33,52 +32,50 @@ Everything runs locally. Zero cloud. Zero cost.
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/Engram.git
+git clone https://github.com/ItsRoy69/Engram.git
 cd Engram
 ```
 
-### 2. Start the databases
+### 2. Create your `.env` file
+
+Copy the example and fill in your values:
+
+```bash
+cp env.example .env
+```
+
+Open `.env` and set at minimum:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
+AUTH_SECRET=any-long-random-string
+```
+
+Everything else has working defaults for local Docker.
+
+### 3. Start the databases
 
 ```bash
 docker compose up -d
 ```
 
-This starts four services:
-- **Qdrant** on port 6333 — vector store
-- **PostgreSQL** on port 5432 — metadata, audit log, PII vault
-- **Redis** on port 6379 — TTL / auto-expiry
-- **FalkorDB** on port 6380 — knowledge graph
+Starts Qdrant (vectors), PostgreSQL (metadata/auth), Redis (TTL), FalkorDB (graph).
 
-Wait about 10 seconds for all services to be healthy.
-
-### 3. Configure environment
+### 4. Apply the database schema
 
 ```bash
-cp backend/.env.example backend/.env
+docker exec -i engram_postgres psql -U engram -d engram < docker/init.sql
 ```
 
-Open `backend/.env` and set your Gemini API key:
-
-```
-GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-3-flash-preview
-```
-
-Everything else can stay as default for local use.
-
-### 4. Install Python dependencies
+### 5. Install Python dependencies
 
 ```bash
 pip install -r backend/requirements.txt
-```
-
-### 5. Install spaCy language model (required by Presidio for PII detection)
-
-```bash
 python -m spacy download en_core_web_lg
 ```
 
-### 6. Install chat UI dependencies
+### 6. Install frontend dependencies
 
 ```bash
 cd chat-ui
@@ -90,95 +87,113 @@ cd ..
 
 ## Running
 
-You need three terminals running simultaneously.
+You need three terminals.
 
-### Terminal 1 — Databases
-
+**Terminal 1 — Databases**
 ```bash
 docker compose up
 ```
 
-Keep this running. You can also run it detached with `docker compose up -d`.
-
-### Terminal 2 — API server
-
+**Terminal 2 — API server**
 ```bash
 cd backend
 python -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The API will be available at `http://localhost:8000`.  
-Interactive docs at `http://localhost:8000/docs`.
-
-### Terminal 3 — Chat UI
-
+**Terminal 3 — Chat UI**
 ```bash
 cd chat-ui
 npm run dev
 ```
 
-Open `http://localhost:3000` in your browser.
+Open `http://localhost:3000` → sign up → start chatting.
+
+---
+
+## LLM Providers
+
+Switch providers by changing two lines in `.env`:
+
+```env
+# Google Gemini (default, free tier)
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key
+
+# OpenAI
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_key
+
+# Anthropic Claude
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_key
+
+# DeepSeek (cheapest option)
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_key
+```
+
+Install the matching package if needed:
+```bash
+pip install openai        # for openai or deepseek
+pip install anthropic     # for anthropic
+```
+
+Default models per provider: `gemini-2.0-flash` · `gpt-4o-mini` · `claude-3-5-haiku-20241022` · `deepseek-chat`
+
+Override with `LLM_MODEL=model-name-here`.
+
+---
+
+## Hosted Databases (optional)
+
+By default everything runs in local Docker. To use hosted services instead, add their connection URLs to `.env` — the local Docker services are ignored automatically.
+
+**PostgreSQL → [Neon](https://neon.tech) (free)**
+```env
+DATABASE_URL=postgresql://user:pass@ep-xyz.neon.tech/dbname?sslmode=require
+```
+
+**Qdrant → [Qdrant Cloud](https://cloud.qdrant.io) (free)**
+```env
+QDRANT_URL=https://xyz.cloud.qdrant.io
+QDRANT_API_KEY=your_api_key
+```
+
+**Redis → [Upstash](https://upstash.com) (free)**
+```env
+REDIS_URL=rediss://default:pass@xyz.upstash.io:6379
+```
+
+FalkorDB has no managed free tier — keep it running via Docker.
 
 ---
 
 ## Chrome Extension
 
-1. Open Chrome and go to `chrome://extensions`
-2. Enable **Developer mode** (toggle in the top right)
+1. Go to `chrome://extensions`
+2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select the `Engram/extension/` folder
-5. Click the Engram icon in your toolbar
-6. Verify the status dot is green (API online)
+4. Select the `extension/` folder
+5. Click the Engram icon → verify the status dot is green
 
-The extension will automatically:
-- Inject relevant memories before you send a message on claude.ai or ChatGPT
-- Store the conversation turn after each AI response
+The extension automatically injects relevant memories before you send a message on claude.ai or ChatGPT, and stores the conversation turn afterward.
 
 ---
 
-## First use — Onboarding
-
-On your first visit to the chat UI, go to the **Onboarding** tab. It walks you through 10 structured questions to seed your memory store and solve the cold-start problem. Each answer is stored as a set of facts.
-
----
-
-## API endpoints
+## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/memory/store` | Store content — runs full ingestion pipeline |
-| `POST` | `/memory/recall` | Retrieve memories — runs full retrieval pipeline |
-| `POST` | `/chat` | Memory-augmented chat via Gemini |
+| `POST` | `/auth/register` | Create account |
+| `POST` | `/auth/login` | Sign in, get JWT |
+| `POST` | `/memory/store` | Store content — full ingestion pipeline |
+| `POST` | `/memory/recall` | Retrieve memories — full retrieval pipeline |
+| `POST` | `/chat` | Memory-augmented chat |
 | `GET` | `/memory/list/{user_id}` | List all memories for a user |
-| `DELETE` | `/memory/{memory_id}` | Invalidate a memory (soft delete) |
+| `DELETE` | `/memory/{memory_id}` | Soft-delete a memory |
 | `GET` | `/health` | Service health check |
 
-Full interactive API docs: `http://localhost:8000/docs`
-
----
-
-## Running tests
-
-Make sure Docker and the API server are running first.
-
-```bash
-# Test individual modules
-python tests/test_memory.py
-python tests/test_extractor.py
-python tests/test_search.py
-python tests/test_graph.py
-
-# Test full pipeline
-python tests/test_brain.py
-
-# Test API endpoints (requires uvicorn running)
-python tests/test_api.py
-```
-
----
-
-**Docker port conflicts**  
-If port 6379 (Redis) conflicts with an existing Redis instance, FalkorDB is already mapped to 6380. For Redis, edit `docker-compose.yml` and change `"6379:6379"` to `"6381:6379"` and update `REDIS_PORT=6381` in `.env`.
+Interactive docs: `http://localhost:8000/docs`
 
 ---
 
@@ -186,16 +201,16 @@ If port 6379 (Redis) conflicts with an existing Redis instance, FalkorDB is alre
 
 | Layer | Technology | Cost |
 |-------|-----------|------|
-| LLM | Google Gemini 2.0 Flash | Free (20 req/day) |
+| LLM | Gemini / OpenAI / Claude / DeepSeek | Free tier available |
 | Embeddings | sentence-transformers all-MiniLM-L6-v2 | Free (local) |
 | Reranker | BAAI/bge-reranker-base | Free (local) |
-| Vector DB | Qdrant | Free (self-hosted) |
-| Graph DB | FalkorDB | Free (self-hosted) |
-| Relational DB | PostgreSQL 16 | Free (self-hosted) |
-| Cache / TTL | Redis 7 | Free (self-hosted) |
+| Vector DB | Qdrant (local or Qdrant Cloud) | Free |
+| Graph DB | FalkorDB | Free (local) |
+| Relational DB | PostgreSQL (local or Neon) | Free |
+| Cache / TTL | Redis (local or Upstash) | Free |
 | PII Detection | Microsoft Presidio | Free |
-| Backend API | FastAPI + uvicorn | Free |
-| Chat UI | Next.js 14 | Free |
+| Backend | FastAPI + uvicorn | Free |
+| Frontend | Next.js 14 | Free |
 | Extension | Chrome Manifest V3 | Free |
 | **Total** | | **$0** |
 
