@@ -218,4 +218,4 @@ Interactive docs: `http://localhost:8000/docs`
 
 ## License
 
-MIT
+[MIT](./LICENSE) © 2026 Jyotirmoy Roy
