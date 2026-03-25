@@ -28,10 +28,10 @@ def test_hybrid_search():
     assert "camelCase" in top["content"], f"Expected camelCase, got: {top['content']}"
     print(f"  ✅ Semantic query — top: '{top['content'][:60]}' (rrf: {top['rrf_score']})")
 
-    print("\n  Testing keyword query (BM25 strength)...")
+    print("\n  Testing keyword query (sparse / BM42 strength)...")
     results = hybrid_search("PostgreSQL", user_id=USER, top_k=3)
     assert len(results) > 0
-    assert "PostgreSQL" in results[0]["content"], f"BM25 should find exact keyword, got: {results[0]['content']}"
+    assert "PostgreSQL" in results[0]["content"], f"Sparse search should find exact keyword, got: {results[0]['content']}"
     print(f"  ✅ Keyword query  — top: '{results[0]['content'][:60]}' (rrf: {results[0]['rrf_score']})")
 
     print("\n  Testing hybrid wins over pure vector...")

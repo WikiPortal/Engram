@@ -32,7 +32,6 @@ redis>=5.0.0
 falkordb>=1.0.0
 
 # ── Keyword Search ────────────────────────────
-rank-bm25==0.2.2
 
 # ── Token counting ────────────────────────────
 tiktoken>=0.7.0
