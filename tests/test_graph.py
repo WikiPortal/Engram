@@ -32,7 +32,6 @@ def test_node_creation():
     print("  Testing ensure_node()...")
     ok = ensure_node("mem-test-001", USER)
     assert ok, "ensure_node should return True"
-    # Idempotent — calling twice should not raise
     ok2 = ensure_node("mem-test-001", USER)
     assert ok2, "ensure_node should be idempotent"
     print("  ✅ Node creation working")
@@ -41,7 +40,6 @@ def test_node_creation():
 def test_relationship_classification():
     print("\n  Testing _classify_relationship()...")
 
-    # Should be UPDATES
     result = _classify_relationship(
         old_content="User works at Acrobat as a software engineer",
         new_content="User works at Google as a senior engineer"
@@ -50,7 +48,6 @@ def test_relationship_classification():
     assert result["relationship"] in ("UPDATES", "EXTENDS"), \
         f"Expected UPDATES or EXTENDS for job change, got {result['relationship']}"
 
-    # Should be EXTENDS
     result = _classify_relationship(
         old_content="User likes coffee",
         new_content="User prefers dark roast espresso with no sugar"
@@ -59,7 +56,6 @@ def test_relationship_classification():
     assert result["relationship"] in ("EXTENDS", "UPDATES"), \
         f"Expected EXTENDS for preference detail, got {result['relationship']}"
 
-    # Should be NONE
     result = _classify_relationship(
         old_content="User has a cat named Whiskers",
         new_content="The API uses camelCase naming convention"
@@ -90,7 +86,6 @@ def test_link_memories():
     for e in edges:
         print(f"    [{e['type']}] {e['from'][:12]} → {e['to'][:12]} (confidence={e['confidence']:.2f})")
 
-    # May be 0 if confidence < 0.85 — that's correct behaviour, not a failure
     print(f"  ✅ link_memories() executed (edges={len(edges)}, gate may have filtered)")
 
 
@@ -100,7 +95,6 @@ def test_cycle_prevention():
     ensure_node("mem-cycle-B", USER)
     ensure_node("mem-cycle-C", USER)
 
-    # A → B → C, then check if C → A would be a cycle
     from graph import _create_edge, _would_create_cycle, UPDATES
     _create_edge("mem-cycle-A", "mem-cycle-B", UPDATES, 0.90, "test edge A→B")
     _create_edge("mem-cycle-B", "mem-cycle-C", UPDATES, 0.90, "test edge B→C")
@@ -121,14 +115,12 @@ def test_get_related():
     print(f"    Related to mem-cycle-A (depth=2): {len(related)} neighbours")
     for r in related:
         print(f"    [{r['rel_type']}] {r['id'][:20]} (confidence={r['confidence']:.2f})")
-    # We created edges above, so should have at least 1
     assert len(related) >= 1, "Should find at least 1 related memory via graph"
     print("  ✅ get_related() working")
 
 
 def test_invalidate_edges():
     print("\n  Testing invalidate_edges()...")
-    # Should not raise even if no UPDATES edges exist
     invalidate_edges("mem-cycle-A")
     print("  ✅ invalidate_edges() working")
 

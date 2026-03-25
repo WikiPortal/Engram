@@ -142,15 +142,12 @@ export default function Home() {
 
   return (
     <div style={{display:"flex",height:"100vh",background:"var(--bg)",color:"var(--text)",overflow:"hidden",fontFamily:"'Geist',sans-serif"}}>
-
-      {/* Sidebar */}
       <aside style={{
         width:sidebarOpen?260:0,flexShrink:0,overflow:"hidden",
         borderRight:sidebarOpen?"1px solid var(--border)":"none",
         display:"flex",flexDirection:"column",
         transition:"width 0.2s ease",background:"var(--bg)"
       }}>
-        {/* Sidebar top */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -163,7 +160,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Panel tabs */}
         <div style={{display:"flex",gap:4,padding:"8px 12px",flexShrink:0}}>
           {(["chat","memories"] as Panel[]).map(p=>(
             <button key={p} onClick={()=>setPanel(p)} style={{
@@ -174,7 +170,6 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Panel content */}
         <div style={{flex:1,overflowY:"auto",padding:"0 8px 8px"}}>
           {panel==="chat"&&(
             <div style={{display:"flex",flexDirection:"column",gap:2}}>
@@ -242,7 +237,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* Sidebar footer */}
         <div style={{flexShrink:0,borderTop:"1px solid var(--border)",padding:"8px 12px"}}>
           <button onClick={()=>setShowOb(true)} style={{width:"100%",padding:"8px 12px",borderRadius:10,border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontSize:12,color:"var(--text-2)",display:"flex",alignItems:"center",gap:8}}
             onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background="var(--bg-3)";(e.currentTarget as HTMLElement).style.color="var(--text)";}}
@@ -266,9 +260,7 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* Main */}
       <main style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,minHeight:0}}>
-        {/* Topbar */}
         <div style={{padding:"10px 16px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <button onClick={()=>setSidebar(s=>!s)} style={{width:30,height:30,borderRadius:8,border:"1px solid var(--border)",background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text-2)"}}>
@@ -284,7 +276,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Messages */}
         <div style={{flex:1,overflowY:"auto",overflowAnchor:"none"}}>
           <div style={{maxWidth:720,margin:"0 auto",padding:"32px 24px"}}>
             {messages.length===0&&(
@@ -338,7 +329,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Input */}
         <div style={{flexShrink:0,padding:"12px 24px 20px"}}>
           <div style={{maxWidth:720,margin:"0 auto"}}>
             <div style={{display:"flex",alignItems:"flex-end",gap:12,background:"var(--bg-2)",border:"1px solid var(--border)",borderRadius:20,padding:"12px 16px",transition:"border-color 0.15s"}}

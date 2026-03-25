@@ -34,12 +34,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
 
-/* Prose */
 .prose p { margin: 0 0 0.8em; line-height: 1.75; }
 .prose p:last-child { margin-bottom: 0; }
 .prose code {

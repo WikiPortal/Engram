@@ -48,8 +48,6 @@ from config import get_settings
 settings = get_settings()
 
 
-# ── PostgreSQL ────────────────────────────────────────────────────
-
 def get_pg() -> psycopg2.extensions.connection:
     """
     Returns a psycopg2 connection.
@@ -63,13 +61,11 @@ def get_pg() -> psycopg2.extensions.connection:
     """
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
-        # Neon requires sslmode=require — ensure it's present
         if "neon.tech" in database_url and "sslmode" not in database_url:
             sep = "&" if "?" in database_url else "?"
             database_url += f"{sep}sslmode=require"
         return psycopg2.connect(database_url)
 
-    # Fall back to individual settings (local Docker)
     return psycopg2.connect(
         host=settings.postgres_host,
         port=settings.postgres_port,
@@ -78,8 +74,6 @@ def get_pg() -> psycopg2.extensions.connection:
         password=settings.postgres_password,
     )
 
-
-# ── Qdrant ────────────────────────────────────────────────────────
 
 def get_qdrant() -> QdrantClient:
     """
@@ -100,8 +94,6 @@ def get_qdrant() -> QdrantClient:
 
     return QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
 
-
-# ── Redis ─────────────────────────────────────────────────────────
 
 def get_redis() -> redis_lib.Redis:
     """

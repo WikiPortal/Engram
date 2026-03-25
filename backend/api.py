@@ -36,11 +36,7 @@ from auth import router as auth_router, get_optional_user
 
 settings = get_settings()
 
-# ── Rate limiter ──────────────────────────────────────────────────
-# Keyed on IP address. Limits are configurable via .env.
 limiter = Limiter(key_func=get_remote_address, default_limits=[])
-
-# ── App ───────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Engram",
@@ -63,8 +59,6 @@ app.add_middleware(
 app.include_router(auth_router)
 
 
-# ── Error classifier ──────────────────────────────────────────────
-
 class EngramError(Exception):
     """Structured error with HTTP status and clean user message."""
     def __init__(self, status_code: int, message: str, detail: str = ""):
@@ -81,9 +75,7 @@ def classify_error(e: Exception) -> EngramError:
     """
     raw = str(e)
 
-    # ── Gemini / LLM quota errors ──────────────────────────────
     if "429" in raw or "quota" in raw.lower() or "rate" in raw.lower():
-        # Try to extract retry delay
         retry_match = re.search(r'retry.*?(\d+)\s*s', raw, re.IGNORECASE)
         retry_hint = ""
         if retry_match:
@@ -94,7 +86,6 @@ def classify_error(e: Exception) -> EngramError:
                 mins = round(secs / 60)
                 retry_hint = f" Try again in ~{mins} minute{'s' if mins != 1 else ''}."
 
-        # Daily vs per-minute quota
         if "per_day" in raw.lower() or "PerDay" in raw or "daily" in raw.lower():
             return EngramError(
                 429,
@@ -109,7 +100,6 @@ def classify_error(e: Exception) -> EngramError:
             "QUOTA_RPM"
         )
 
-    # ── Gemini model not found ─────────────────────────────────
     if "not found" in raw.lower() and "model" in raw.lower():
         from llm import get_provider, get_model
         return EngramError(
@@ -119,7 +109,6 @@ def classify_error(e: Exception) -> EngramError:
             "MODEL_NOT_FOUND"
         )
 
-    # ── Gemini auth error ──────────────────────────────────────
     if "api_key" in raw.lower() or "401" in raw or "403" in raw or "invalid" in raw.lower() and "key" in raw.lower():
         return EngramError(
             401,
@@ -127,7 +116,6 @@ def classify_error(e: Exception) -> EngramError:
             "AUTH_ERROR"
         )
 
-    # ── Database / connection errors ───────────────────────────
     if "connection refused" in raw.lower() or "connect" in raw.lower() and ("qdrant" in raw.lower() or "redis" in raw.lower() or "postgres" in raw.lower()):
         return EngramError(
             503,
@@ -144,7 +132,6 @@ def classify_error(e: Exception) -> EngramError:
     if "psycopg2" in raw.lower() or "postgres" in raw.lower():
         return EngramError(503, "PostgreSQL database is unavailable. Run: docker compose up -d", "POSTGRES_DOWN")
 
-    # ── Gemini content blocked ─────────────────────────────────
     if "safety" in raw.lower() or "blocked" in raw.lower() or "SAFETY" in raw:
         return EngramError(
             422,
@@ -152,7 +139,6 @@ def classify_error(e: Exception) -> EngramError:
             "CONTENT_BLOCKED"
         )
 
-    # ── JSON parse errors from LLM responses ──────────────────
     if "json" in raw.lower() and ("decode" in raw.lower() or "parse" in raw.lower()):
         return EngramError(
             502,
@@ -160,7 +146,6 @@ def classify_error(e: Exception) -> EngramError:
             "LLM_PARSE_ERROR"
         )
 
-    # ── Generic fallback ───────────────────────────────────────
     return EngramError(500, f"An unexpected error occurred: {raw[:200]}", "INTERNAL_ERROR")
 
 
@@ -181,8 +166,6 @@ def handle(e: Exception) -> None:
     err = classify_error(e)
     raise err
 
-
-# ── Request / Response models ─────────────────────────────────────
 
 class StoreRequest(BaseModel):
     content: str = Field(..., description="Raw text to store as memories")
@@ -246,8 +229,6 @@ class HealthResponse(BaseModel):
     model: str
     graph: dict
 
-
-# ── Endpoints ─────────────────────────────────────────────────────
 
 @app.post("/memory/store", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(settings.rate_limit_store)

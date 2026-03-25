@@ -28,8 +28,6 @@ settings = get_settings()
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
-# ── STORE ────────────────────────────────────────────────────────
-
 def remember(content: str, user_id: str = "default", tags: list[str] = []) -> dict:
     """
     Full store pipeline.
@@ -43,16 +41,12 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
         "facts": []
     }
 
-    # Step 1 — PII masking
     masked, token_map = pii.mask(content)
 
-    # Step 2 — Extract facts (double-pass Gemini)
     facts = extract(masked)
     if not facts:
-        # Fallback: store raw as single fact
         facts = [{"content": masked, "is_temporary": None, "confidence": 0.7, "tags": tags}]
 
-    # Step 3 — Process each fact
     for fact in facts:
         fact_content = fact.get("content", "").strip()
         if not fact_content:
@@ -60,25 +54,20 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
 
         fact_tags = list(set(tags + fact.get("tags", [])))
 
-        # Step 4 — Duplicate check
         dup, match, score = is_duplicate(fact_content, user_id)
         if dup:
             print(f"[Engram] Skipping duplicate (score {score}): {fact_content[:50]}")
             result["skipped_duplicates"] += 1
             continue
 
-        # Step 5 — Contradiction resolution
         found, invalidated = resolve(fact_content, user_id)
         if found:
             result["contradictions_resolved"] += len(invalidated)
-            # Invalidate graph edges for superseded memories
             for inv_id in invalidated:
                 invalidate_edges(inv_id)
 
-        # Step 6 — Store in Qdrant
         memory_id = _store_raw(fact_content, user_id=user_id, tags=fact_tags)
 
-        # Step 7 — TTL classification
         expires_at = get_expiry(
             fact_content,
             is_temporary_hint=fact.get("is_temporary")
@@ -86,10 +75,6 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
         if expires_at:
             set_ttl(memory_id, expires_at)
 
-        # Step 8 — Graph linking (FalkorDB)
-        # Find semantically-close existing memories to check for relationships.
-        # Re-use the same candidates the contradiction check already found,
-        # but fetch fresh from Qdrant to get a clean list (post-invalidation).
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -123,37 +108,28 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
     return result
 
 
-# ── RECALL ───────────────────────────────────────────────────────
-
 def recall(query: str, user_id: str = "default") -> dict:
     """
     Full recall pipeline.
     Returns top memories with context token count.
     """
 
-    # Step 1 — HyDE expansion
     expanded_query = expand(query)
 
-    # Step 2 — Hybrid search (BM25 + vector + RRF)
     candidates = hybrid_search(expanded_query, user_id=user_id, top_k=settings.top_k_retrieval)
 
     if not candidates:
         return {"query": query, "memories": [], "total_found": 0, "context_tokens": 0}
 
-    # Step 3 — Filter expired TTL memories
     active = [c for c in candidates if not is_expired(c["id"])]
 
-    # Step 4 — Graph expansion (FalkorDB)
-    # For each candidate, pull in graph-connected memories not already in the list.
-    # This surfaces EXTENDS and DERIVES neighbours that pure vector search may have missed.
     try:
         seen_ids = {c["id"] for c in active}
         graph_additions = []
-        for candidate in active[:5]:  # only expand top 5 to keep latency bounded
+        for candidate in active[:5]:
             related = get_related(candidate["id"], user_id=user_id, depth=1)
             for rel in related:
                 if rel["id"] not in seen_ids:
-                    # Fetch content from Qdrant for this graph neighbour
                     from qdrant_client import QdrantClient
                     _client = get_qdrant()
                     hits = _client.retrieve(
@@ -176,10 +152,8 @@ def recall(query: str, user_id: str = "default") -> dict:
     except Exception as e:
         print(f"[Engram] Graph expansion failed (non-critical): {e}")
 
-    # Step 5 — BGE rerank
     reranked = rerank(query, active, top_k=settings.top_k_reranked)
 
-    # Step 6 — Context window guard (max 2000 tokens)
     final = []
     total_tokens = 0
     for memory in reranked:
@@ -198,8 +172,6 @@ def recall(query: str, user_id: str = "default") -> dict:
     }
 
 
-# ── CHAT ─────────────────────────────────────────────────────────
-
 def chat(message: str, user_id: str = "default", history: list[dict] = []) -> str:
     """
     Memory-augmented chat.
@@ -208,11 +180,9 @@ def chat(message: str, user_id: str = "default", history: list[dict] = []) -> st
     """
     from llm import chat_complete
 
-    # Recall relevant memories
     result = recall(message, user_id=user_id)
     memories = result["memories"]
 
-    # Build memory context string
     if memories:
         memory_context = "Relevant memories from your knowledge base:\n"
         for i, m in enumerate(memories, 1):

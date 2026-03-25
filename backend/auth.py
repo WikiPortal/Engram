@@ -35,8 +35,6 @@ bearer = HTTPBearer(auto_error=False)
 # 5 register attempts per hour, 10 login attempts per minute per IP.
 _limiter = Limiter(key_func=get_remote_address)
 
-# ── JWT (no external library needed) ─────────────────────────────
-
 SECRET = os.getenv("AUTH_SECRET", "engram-change-this-secret-in-production")
 TOKEN_TTL = 60 * 60 * 24 * 30  # 30 days
 
@@ -62,7 +60,6 @@ def _verify(token: str) -> dict:
         )
         if not hmac.compare_digest(sig, expected):
             raise ValueError("bad signature")
-        # Pad base64
         pad = 4 - len(body) % 4
         payload = json.loads(base64.urlsafe_b64decode(body + "=" * pad))
         if payload.get("exp", 0) < time.time():
@@ -82,8 +79,6 @@ def create_token(user_id: str, email: str, username: str) -> str:
     })
 
 
-# ── Password hashing ──────────────────────────────────────────────
-
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
     key  = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
@@ -100,13 +95,9 @@ def verify_password(password: str, stored: str) -> bool:
     )
 
 
-# ── DB helpers ────────────────────────────────────────────────────
-
 def _pg():
     return get_pg()
 
-
-# ── Dependency: get current user from JWT ─────────────────────────
 
 def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict:
     """
@@ -136,8 +127,6 @@ def get_optional_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> 
         return None
 
 
-# ── Request / Response models ─────────────────────────────────────
-
 class RegisterRequest(BaseModel):
     email: str = Field(..., description="Email address")
     username: str = Field(..., min_length=3, max_length=50, description="Display name")
@@ -162,13 +151,10 @@ class MeResponse(BaseModel):
     username: str
 
 
-# ── Endpoints ─────────────────────────────────────────────────────
-
 @router.post("/register", response_model=AuthResponse, status_code=201)
 @_limiter.limit("5/hour")
 def register(req: RegisterRequest, request: Request):
     """Create a new account. Returns JWT token immediately."""
-    # Basic email validation
     if "@" not in req.email or "." not in req.email.split("@")[-1]:
         raise HTTPException(400, "Invalid email address")
 
@@ -218,7 +204,6 @@ def login(req: LoginRequest, request: Request):
     if not verify_password(req.password, pw_hash):
         raise HTTPException(401, "Invalid email or password")
 
-    # Update last_login
     try:
         conn = _pg()
         cur  = conn.cursor()

@@ -1,37 +1,15 @@
-/**
- * Engram — Content Script (Step 16)
- *
- * Two jobs:
- *   1. INTERCEPT: Before the user sends a prompt, recall relevant memories
- *      and prepend them to the message as context.
- *   2. STORE: After an AI response is received, store the conversation
- *      turn (user message + AI response) as a memory.
- *
- * Targets: claude.ai and chatgpt.com
- * Both sites use a contenteditable div or textarea for the prompt box.
- * We hook the submit button / Enter key to intercept before send.
- */
-
 (function () {
   "use strict";
-
-  // ── Site detection ──────────────────────────────────────────────
 
   const SITE = window.location.hostname.includes("claude.ai")
     ? "claude"
     : "chatgpt";
 
-  // ── Selectors per site ──────────────────────────────────────────
-
   const SELECTORS = {
     claude: {
-      // The main prompt input (contenteditable div)
       input: '[data-testid="chat-input"], div[contenteditable="true"]',
-      // Send button
       sendBtn: '[data-testid="send-button"], button[aria-label="Send Message"]',
-      // AI response containers
       response: '[data-testid="chat-message-content"], .font-claude-message',
-      // Human turn containers
       humanTurn: '[data-testid="human-turn"]',
     },
     chatgpt: {
@@ -44,13 +22,9 @@
 
   const sel = SELECTORS[SITE];
 
-  // ── State ───────────────────────────────────────────────────────
-
-  let lastInjectedMemoryBlock = null;   // track what we injected
-  let isInjecting = false;              // prevent re-entrance
-  let lastStoredTurn = "";             // prevent duplicate stores
-
-  // ── Helpers ─────────────────────────────────────────────────────
+  let lastInjectedMemoryBlock = null;
+  let isInjecting = false;
+  let lastStoredTurn = "";
 
   function getInputEl() {
     return document.querySelector(sel.input);
@@ -64,14 +38,11 @@
   function setInputText(el, text) {
     if (!el) return;
     if (el.value !== undefined) {
-      // textarea
       el.value = text;
       el.dispatchEvent(new Event("input", { bubbles: true }));
     } else {
-      // contenteditable
       el.innerText = text;
       el.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      // Move cursor to end
       const range = document.createRange();
       const sel2 = window.getSelection();
       range.selectNodeContents(el);
@@ -121,13 +92,10 @@
     el._hideTimer = setTimeout(() => { el.style.opacity = "0"; }, 3000);
   }
 
-  // ── Memory injection (before send) ─────────────────────────────
-
   async function injectMemories(inputEl) {
     if (isInjecting) return;
     const query = getInputText(inputEl).trim();
 
-    // Strip any previously injected memory block before reading the query
     const cleanQuery = query.replace(/\[Engram memories\][\s\S]*?\[End of memories\]\n\n/, "").trim();
     if (!cleanQuery) return;
 
@@ -147,7 +115,6 @@
         return;
       }
 
-      // Prepend memory block to the user's message
       const memoryBlock = formatMemoryBlock(memories);
       lastInjectedMemoryBlock = memoryBlock;
       setInputText(inputEl, memoryBlock + cleanQuery);
@@ -159,10 +126,7 @@
     }
   }
 
-  // ── Store conversation turn (after AI responds) ─────────────────
-
   async function storeConversationTurn() {
-    // Find the last human message and last AI response
     const humanTurns = document.querySelectorAll(sel.humanTurn);
     const aiResponses = document.querySelectorAll(sel.response);
 
@@ -171,17 +135,14 @@
     const lastHuman = humanTurns[humanTurns.length - 1];
     const lastAI = aiResponses[aiResponses.length - 1];
 
-    // Get text, strip the injected memory block from the human turn
     let humanText = (lastHuman.innerText || lastHuman.textContent || "").trim();
     humanText = humanText.replace(/\[Engram memories\][\s\S]*?\[End of memories\]\n\n/, "").trim();
     const aiText = (lastAI.innerText || lastAI.textContent || "").trim();
 
     if (!humanText || !aiText) return;
 
-    // Build the turn content to store
     const turnContent = `User said: ${humanText}\nAssistant responded: ${aiText}`;
 
-    // Deduplicate — don't store the same turn twice
     if (turnContent === lastStoredTurn) return;
     lastStoredTurn = turnContent;
 
@@ -194,8 +155,6 @@
     }
   }
 
-  // ── Submit interception ─────────────────────────────────────────
-
   function interceptSubmit(e) {
     const inputEl = getInputEl();
     if (!inputEl) return;
@@ -203,18 +162,15 @@
     const text = getInputText(inputEl).trim();
     if (!text) return;
 
-    // Intercept Enter (without Shift) and click on send button
     const isEnter = e.type === "keydown" && e.key === "Enter" && !e.shiftKey;
     const isClick = e.type === "click";
 
     if (!isEnter && !isClick) return;
 
-    // Prevent the default send, inject memories, then allow send
     e.preventDefault();
     e.stopPropagation();
 
     injectMemories(inputEl).then(() => {
-      // Re-dispatch the original event after injection
       if (isEnter) {
         inputEl.dispatchEvent(new KeyboardEvent("keydown", {
           key: "Enter", code: "Enter", keyCode: 13,
@@ -227,14 +183,10 @@
     });
   }
 
-  // ── Response observer (watch for AI replies finishing) ──────────
-
   let storeTimer = null;
 
   function watchForResponses() {
     const observer = new MutationObserver(() => {
-      // Debounce — wait 2s after last DOM change before storing
-      // (AI streams tokens, we want to wait until it finishes)
       clearTimeout(storeTimer);
       storeTimer = setTimeout(storeConversationTurn, 2000);
     });
@@ -246,16 +198,12 @@
     });
   }
 
-  // ── Event binding (with retry for SPAs) ────────────────────────
-
   function bindEvents() {
     const inputEl = getInputEl();
     if (!inputEl) return false;
 
-    // Keydown on the input box
     inputEl.addEventListener("keydown", interceptSubmit, true);
 
-    // Also watch the send button directly
     const sendBtn = document.querySelector(sel.sendBtn);
     if (sendBtn) {
       sendBtn.addEventListener("click", interceptSubmit, true);
@@ -264,7 +212,6 @@
     return true;
   }
 
-  // SPA pages load content after the script runs — retry binding
   function tryBind(attempts = 0) {
     if (bindEvents()) {
       console.log("[Engram] Attached to", SITE);
@@ -275,7 +222,6 @@
     }
   }
 
-  // Re-bind when URL changes (SPA navigation)
   let lastUrl = location.href;
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
@@ -283,8 +229,6 @@
       setTimeout(() => tryBind(), 500);
     }
   }).observe(document, { subtree: true, childList: true });
-
-  // ── Init ────────────────────────────────────────────────────────
 
   tryBind();
   watchForResponses();

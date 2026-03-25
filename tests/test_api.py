@@ -80,7 +80,6 @@ def test_list():
 
 def test_delete():
     print("\n  DELETE /memory/{memory_id} ...")
-    # Get a memory ID to delete
     _, memories = request("GET", f"/memory/list/{USER}")
     assert memories, "Need at least one memory to delete"
     target_id = memories[0]["id"]
@@ -90,7 +89,6 @@ def test_delete():
     assert body["status"] == "invalidated"
     print(f"  ✅ /memory/delete — invalidated {target_id[:12]}...")
 
-    # Verify it's gone from the list
     _, after = request("GET", f"/memory/list/{USER}")
     ids_after = {m["id"] for m in after}
     assert target_id not in ids_after, "Deleted memory should not appear in list"
@@ -113,11 +111,9 @@ def test_chat():
 
 def test_validation():
     print("\n  Input validation ...")
-    # Empty content should 400
     status, _ = request("POST", "/memory/store", {"content": "  ", "user_id": USER})
     assert status == 400, f"Empty content should return 400, got {status}"
 
-    # Empty query should 400
     status, _ = request("POST", "/memory/recall", {"query": "", "user_id": USER})
     assert status == 400, f"Empty query should return 400, got {status}"
     print("  ✅ Validation working")
@@ -127,7 +123,6 @@ if __name__ == "__main__":
     print("\n🧠 Engram — API Test\n")
     print(f"  Target: {BASE}\n")
 
-    # Quick connectivity check
     try:
         request("GET", "/health")
     except Exception:

@@ -1,21 +1,5 @@
-/**
- * Engram — Background Service Worker (Step 16)
- *
- * Responsibilities:
- *   1. Receive messages from content.js
- *   2. POST to Engram API (/memory/store, /memory/recall)
- *   3. Return results back to content.js
- *
- * Why background.js handles API calls (not content.js directly):
- *   - Avoids CORS issues on some pages
- *   - Centralises the API base URL and user_id config
- *   - Content scripts have restricted fetch in some CSP environments
- */
-
 const DEFAULT_API = "http://localhost:8000";
 const DEFAULT_USER = "default";
-
-// ── Config helpers ────────────────────────────────────────────────
 
 async function getConfig() {
   return new Promise((resolve) => {
@@ -25,8 +9,6 @@ async function getConfig() {
     );
   });
 }
-
-// ── API calls ─────────────────────────────────────────────────────
 
 async function storeMemory(content, apiBase, userId) {
   try {
@@ -58,10 +40,7 @@ async function recallMemories(query, apiBase, userId) {
   }
 }
 
-// ── Message handler ───────────────────────────────────────────────
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Must return true to keep the channel open for async response
   (async () => {
     const { apiBase, userId, enabled } = await getConfig();
 
@@ -71,12 +50,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === "RECALL") {
-      // content.js asking: what memories are relevant to this query?
       const result = await recallMemories(message.query, apiBase, userId);
       sendResponse({ ok: !!result, data: result });
 
     } else if (message.type === "STORE") {
-      // content.js sending: store this conversation turn
       const result = await storeMemory(message.content, apiBase, userId);
       sendResponse({ ok: !!result, data: result });
 

@@ -23,7 +23,6 @@ def test_negation():
     facts = extract("I don't like using MongoDB. We should not use camelCase for database fields.")
     assert len(facts) > 0
     contents = [f["content"].lower() for f in facts]
-    # Make sure negation is preserved — "dislikes" or "not" should appear
     negation_preserved = any("not" in c or "dislike" in c or "avoid" in c or "should not" in c for c in contents)
     assert negation_preserved, f"Negation not preserved in: {contents}"
     print(f"  ✅ Negation preserved correctly")
@@ -34,7 +33,6 @@ def test_negation():
 def test_contradiction():
     print("\n  Testing contradiction detection (per-fact, not batch)...")
 
-    # Case 1: direct contradiction — new fact supersedes existing
     is_contra, reason = check_contradiction(
         "Sarah now leads the backend team",
         "John leads the backend team"
@@ -42,7 +40,6 @@ def test_contradiction():
     assert is_contra, "Should detect contradiction: leadership changed"
     print(f"  ✅ Contradiction detected: {reason}")
 
-    # Case 2: semantically related but NOT contradicting
     is_contra2, _ = check_contradiction(
         "We deployed on Friday",
         "John leads the backend team"
@@ -50,7 +47,6 @@ def test_contradiction():
     assert not is_contra2, "Should NOT flag unrelated fact as contradiction"
     print(f"  ✅ Unrelated fact correctly ignored")
 
-    # Case 3: additive detail — must NOT be flagged as contradiction
     is_contra3, _ = check_contradiction(
         "User bought a coffee machine",
         "User likes coffee"
