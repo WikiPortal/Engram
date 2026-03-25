@@ -18,7 +18,7 @@ import os
 import re
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, Request, Depends, status
+from fastapi import FastAPI, HTTPException, Request, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -285,18 +285,46 @@ def recall_memories(req: RecallRequest, request: Request, current_user: dict = D
         handle(e)
 
 
+def _store_conversation_turn(user_message: str, assistant_response: str, user_id: str) -> None:
+    """
+    Persist a conversation turn as a memory.
+    Called via FastAPI BackgroundTasks — runs after the response is sent,
+    inside the same process, managed by uvicorn's event loop.
+
+    Why BackgroundTasks instead of daemon threads:
+      - Daemon threads are fire-and-forget with no lifecycle management.
+        If the server shuts down mid-thread, the write is silently lost.
+      - BackgroundTasks run within uvicorn's request lifecycle. On graceful
+        shutdown uvicorn drains in-flight background tasks before exiting.
+      - No new dependency required (BackgroundTasks is built into FastAPI).
+
+    Note: for true at-least-once delivery across crashes, graduate this to
+    a persistent task queue (ARQ + Redis or Celery). That is Step 6.
+    """
+    try:
+        turn = f"User: {user_message}\nAssistant: {assistant_response}"
+        brain.remember(turn, user_id=user_id, tags=["conversation"])
+        print(f"[Engram] Conversation turn stored for user [{user_id[:8]}]")
+    except Exception as e:
+        print(f"[Engram] Background turn store failed (non-critical): {e}")
+
+
 @app.post("/chat", response_model=ChatResponse)
 @limiter.limit(settings.rate_limit_chat)
-def chat(req: ChatRequest, request: Request, current_user: dict = Depends(get_optional_user)):
+def chat(
+    req: ChatRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_optional_user),
+):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     try:
         import pii as _pii
-        import threading
 
         user_id = current_user["sub"] if current_user else req.user_id
 
-        # Recall count for badge
+        # Recall relevant memories (also used for badge count)
         recall_result = brain.recall(req.message, user_id=user_id)
         memories_used = len(recall_result["memories"])
 
@@ -307,18 +335,16 @@ def chat(req: ChatRequest, request: Request, current_user: dict = Depends(get_op
             history=req.history,
         )
 
-        # Restore PII tokens
+        # Restore any PII tokens that were masked before storage
         response_text = _pii.restore(response_text)
 
-        # Store turn as memory (background, non-blocking)
-        def _store_turn():
-            try:
-                turn = f"User: {req.message}\nAssistant: {response_text}"
-                brain.remember(turn, user_id=user_id, tags=["conversation"])
-            except Exception as e:
-                print(f"[Engram] Background store failed (non-critical): {e}")
-
-        threading.Thread(target=_store_turn, daemon=True).start()
+        # Store turn after response is sent — non-blocking, lifecycle-managed
+        background_tasks.add_task(
+            _store_conversation_turn,
+            user_message=req.message,
+            assistant_response=response_text,
+            user_id=user_id,
+        )
 
         return ChatResponse(response=response_text, memories_used=memories_used)
 
