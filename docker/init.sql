@@ -65,3 +65,17 @@ CREATE INDEX IF NOT EXISTS idx_memories_ttl     ON memories(ttl_expires_at);
 CREATE INDEX IF NOT EXISTS idx_memories_type    ON memories(type);
 CREATE INDEX IF NOT EXISTS idx_audit_memory_id  ON audit_log(memory_id);
 CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_log(action);
+
+-- ── Refresh Tokens ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  VARCHAR(64) UNIQUE NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked     BOOLEAN DEFAULT FALSE,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_token_hash    ON refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_user_id ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_revoked ON refresh_tokens(revoked, expires_at);
