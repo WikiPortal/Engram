@@ -20,14 +20,20 @@ import json
 import time
 from db import get_pg
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, EmailStr
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from config import get_settings
 
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer = HTTPBearer(auto_error=False)
+
+# Auth rate limits are tighter than memory endpoints — brute-force protection.
+# 5 register attempts per hour, 10 login attempts per minute per IP.
+_limiter = Limiter(key_func=get_remote_address)
 
 # ── JWT (no external library needed) ─────────────────────────────
 
@@ -159,7 +165,8 @@ class MeResponse(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
-def register(req: RegisterRequest):
+@_limiter.limit("5/hour")
+def register(req: RegisterRequest, request: Request):
     """Create a new account. Returns JWT token immediately."""
     # Basic email validation
     if "@" not in req.email or "." not in req.email.split("@")[-1]:
@@ -188,7 +195,8 @@ def register(req: RegisterRequest):
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(req: LoginRequest):
+@_limiter.limit("10/minute")
+def login(req: LoginRequest, request: Request):
     """Sign in with email + password. Returns JWT token."""
     try:
         conn = _pg()

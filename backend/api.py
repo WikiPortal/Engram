@@ -24,6 +24,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 import brain
 from contradiction import invalidate_memory
@@ -33,6 +36,10 @@ from auth import router as auth_router, get_optional_user
 
 settings = get_settings()
 
+# ── Rate limiter ──────────────────────────────────────────────────
+# Keyed on IP address. Limits are configurable via .env.
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
+
 # ── App ───────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -40,6 +47,9 @@ app = FastAPI(
     description="Private, self-hosted AI memory layer",
     version="1.0.0",
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -240,7 +250,8 @@ class HealthResponse(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @app.post("/memory/store", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
-def store_memory(req: StoreRequest, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(settings.rate_limit_store)
+def store_memory(req: StoreRequest, request: Request, current_user: dict = Depends(get_optional_user)):
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content cannot be empty")
     user_id = current_user["sub"] if current_user else req.user_id
@@ -254,7 +265,8 @@ def store_memory(req: StoreRequest, current_user: dict = Depends(get_optional_us
 
 
 @app.post("/memory/recall", response_model=RecallResponse)
-def recall_memories(req: RecallRequest, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(settings.rate_limit_recall)
+def recall_memories(req: RecallRequest, request: Request, current_user: dict = Depends(get_optional_user)):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query cannot be empty")
     user_id = current_user["sub"] if current_user else req.user_id
@@ -274,7 +286,8 @@ def recall_memories(req: RecallRequest, current_user: dict = Depends(get_optiona
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(settings.rate_limit_chat)
+def chat(req: ChatRequest, request: Request, current_user: dict = Depends(get_optional_user)):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     try:
@@ -316,7 +329,8 @@ def chat(req: ChatRequest, current_user: dict = Depends(get_optional_user)):
 
 
 @app.get("/memory/list/{user_id}", response_model=list[MemoryListItem])
-def list_memories(user_id: str, limit: int = 50, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(settings.rate_limit_recall)
+def list_memories(user_id: str, request: Request, limit: int = 50, current_user: dict = Depends(get_optional_user)):
     if current_user and current_user["sub"] != user_id:
         raise HTTPException(403, "Cannot access another user's memories")
     limit = min(limit, 500)
@@ -362,7 +376,8 @@ def list_memories(user_id: str, limit: int = 50, current_user: dict = Depends(ge
 
 
 @app.delete("/memory/{memory_id}", status_code=status.HTTP_200_OK)
-def delete_memory(memory_id: str):
+@limiter.limit(settings.rate_limit_store)
+def delete_memory(memory_id: str, request: Request):
     try:
         invalidate_memory(memory_id, reason="User-requested deletion via API")
         return {"memory_id": memory_id, "status": "invalidated"}

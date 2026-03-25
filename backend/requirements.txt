@@ -40,3 +40,4 @@ tiktoken>=0.7.0
 # ── API Server ─────────────────────────────────────────────────────
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+slowapi>=0.1.9

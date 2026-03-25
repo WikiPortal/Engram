@@ -65,7 +65,17 @@ class Settings(BaseSettings):
     app_port: int = 8000
 
     # ── CORS ──────────────────────────────────────
+    # Comma-separated list of allowed origins.
+    # Default: localhost dev ports only.
+    # Production: set CORS_ORIGINS=https://yourdomain.com in .env
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # ── Rate limiting ──────────────────────────────
+    # slowapi limit strings. Format: "N/period" e.g. "30/minute"
+    # Auth limits live in auth.py (tighter — brute-force protection)
+    rate_limit_store:  str = "30/minute"   # LLM-backed write — conservative
+    rate_limit_chat:   str = "20/minute"   # LLM-backed chat  — most expensive
+    rate_limit_recall: str = "60/minute"   # read-only        — looser
 
     # ── Auth ──────────────────────────────────────
     auth_secret: str = "engram-change-this-secret-in-production"
