@@ -96,29 +96,36 @@ def find_conflicting(new_content: str, user_id: str = "default") -> list[dict]:
 def resolve(new_content: str, user_id: str = "default") -> tuple[bool, list[str]]:
     """
     Full contradiction resolution pipeline.
-    1. Find semantically similar existing memories
-    2. Use extractor.is_contradiction() to check each one
-    3. Invalidate any that conflict
-    Returns (contradiction_found, list_of_invalidated_ids)
+    1. Find semantically similar existing memories (candidates)
+    2. Check each candidate individually against the new fact
+    3. Invalidate only the ones the LLM explicitly flags as contradicting
+
+    Key fix over the old approach: the old code called is_contradiction()
+    on the entire candidate list as a batch, then invalidated ALL of them
+    the moment any contradiction was detected. This caused false-positive
+    deletions of unrelated but semantically nearby memories.
+
+    Now each candidate is checked in isolation — only exact contradictions
+    are invalidated.
+
+    Returns (any_contradiction_found, list_of_invalidated_ids)
     """
-    from extractor import is_contradiction
+    from extractor import check_contradiction
 
     candidates = find_conflicting(new_content, user_id)
     if not candidates:
         return False, []
 
-    existing_contents = [c["content"] for c in candidates]
-    contradicts, reason = is_contradiction(new_content, existing_contents)
-
-    if not contradicts:
-        return False, []
-
-    # Invalidate all close candidates when contradiction detected
-    # (conservative: better to invalidate too many than leave stale facts)
     invalidated = []
+
     for candidate in candidates:
-        if candidate["score"] > 0.4:
+        contradicts, reason = check_contradiction(new_content, candidate["content"])
+        if contradicts:
             invalidate_memory(candidate["id"], reason=reason)
             invalidated.append(candidate["id"])
+            print(
+                f"[Engram] Contradiction resolved: [{candidate['id'][:8]}] "
+                f"superseded by new fact. Reason: {reason}"
+            )
 
-    return True, invalidated
+    return len(invalidated) > 0, invalidated

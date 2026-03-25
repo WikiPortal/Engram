@@ -5,7 +5,7 @@ Run from project root: python tests/test_extractor.py
 import sys
 sys.path.append("backend")
 
-from extractor import extract, is_contradiction
+from extractor import extract, check_contradiction
 
 
 def test_extraction():
@@ -32,15 +32,31 @@ def test_negation():
 
 
 def test_contradiction():
-    print("\n  Testing contradiction detection...")
-    existing = ["John leads the backend team", "We use PostgreSQL"]
-    is_contra, reason = is_contradiction("Sarah now leads the backend team", existing)
-    assert is_contra, "Should detect contradiction with John leading backend"
+    print("\n  Testing contradiction detection (per-fact, not batch)...")
+
+    # Case 1: direct contradiction — new fact supersedes existing
+    is_contra, reason = check_contradiction(
+        "Sarah now leads the backend team",
+        "John leads the backend team"
+    )
+    assert is_contra, "Should detect contradiction: leadership changed"
     print(f"  ✅ Contradiction detected: {reason}")
 
-    is_contra2, _ = is_contradiction("We deployed on Friday", existing)
+    # Case 2: semantically related but NOT contradicting
+    is_contra2, _ = check_contradiction(
+        "We deployed on Friday",
+        "John leads the backend team"
+    )
     assert not is_contra2, "Should NOT flag unrelated fact as contradiction"
-    print(f"  ✅ Non-contradiction correctly ignored")
+    print(f"  ✅ Unrelated fact correctly ignored")
+
+    # Case 3: additive detail — must NOT be flagged as contradiction
+    is_contra3, _ = check_contradiction(
+        "User bought a coffee machine",
+        "User likes coffee"
+    )
+    assert not is_contra3, "Adding detail should NOT contradict the original"
+    print(f"  ✅ Additive detail correctly ignored")
 
 
 if __name__ == "__main__":

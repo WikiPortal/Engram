@@ -86,20 +86,34 @@ def extract(text: str) -> list[dict]:
     return facts
 
 
-def is_contradiction(new_fact: str, existing_facts: list[str]) -> tuple[bool, str]:
+def check_contradiction(new_fact: str, existing_fact: str) -> tuple[bool, str]:
     """
-    Check if new_fact contradicts any existing facts.
-    Returns (True, reason) or (False, "")
+    Check if new_fact directly contradicts a single existing fact.
+    Returns (True, reason) or (False, "").
+
+    Checks one pair at a time so callers know exactly which memory
+    to invalidate — avoids the false-positive mass-delete of the old
+    batch approach.
     """
-    if not existing_facts:
-        return False, ""
+    prompt = """You are checking if two facts directly contradict each other.
+A contradiction means they cannot both be true at the same time.
+Semantic similarity alone is NOT a contradiction — only invalidate if
+the new fact makes the existing fact factually wrong or outdated.
 
-    prompt = """You are checking if a new fact contradicts existing stored facts.
-Return ONLY valid JSON:
-{"contradicts": true/false, "reason": "brief explanation or empty string"}"""
+Examples of contradictions:
+  existing: "User lives in New York"
+  new:      "User lives in London"   → contradicts (location changed)
 
-    existing_str = "\n".join(f"- {f}" for f in existing_facts)
-    message = f"New fact: {new_fact}\n\nExisting facts:\n{existing_str}"
+Examples that are NOT contradictions:
+  existing: "User likes coffee"
+  new:      "User bought a coffee machine"  → related, not contradicting
+  existing: "User works at Acme"
+  new:      "User's manager is Alice"       → adds detail, not contradicting
+
+Return ONLY valid JSON, no markdown:
+{"contradicts": true/false, "reason": "one sentence or empty string"}"""
+
+    message = f"Existing fact: {existing_fact}\n\nNew fact: {new_fact}"
 
     try:
         data = _call_llm(prompt, message)
