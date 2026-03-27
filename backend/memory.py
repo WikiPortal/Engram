@@ -43,31 +43,90 @@ def _tokenize(text: str) -> SparseVector:
 
 def _ensure_collection(client: QdrantClient):
     """
-    Create the Qdrant collection if it doesn't exist yet.
-    Declares both the dense vector config and the sparse vector field
-    so hybrid search works out of the box on new collections.
+    Ensure the Qdrant collection exists with the correct schema.
+
+    On first run (collection missing): creates with dense vectors + payload
+    indexes for user_id, is_latest, is_valid. Attempts to also add sparse
+    vector config; if the Qdrant version doesn't support it, continues
+    without sparse (search falls back to vector-only via RRF).
+
+    On subsequent runs (collection exists): ensures payload indexes exist
+    (idempotent — Qdrant ignores create_payload_index if already present).
+    Does NOT attempt to modify vector config on existing collections since
+    Qdrant does not support changing vector schema after creation.
     """
+    from qdrant_client.models import PayloadSchemaType
+
     existing = [c.name for c in client.get_collections().collections]
+
     if settings.qdrant_collection not in existing:
-        client.create_collection(
-            collection_name=settings.qdrant_collection,
-            vectors_config=VectorParams(
-                size=settings.embedding_dim,
-                distance=Distance.COSINE,
-            ),
-            sparse_vectors_config={
-                SPARSE_FIELD: SparseVectorParams(
-                    index=SparseIndexParams(on_disk=False),
-                )
-            },
-        )
-        print(f"[Engram] Created collection: {settings.qdrant_collection} "
-              f"(dense + sparse/{SPARSE_FIELD})")
+        try:
+            client.create_collection(
+                collection_name=settings.qdrant_collection,
+                vectors_config=VectorParams(
+                    size=settings.embedding_dim,
+                    distance=Distance.COSINE,
+                ),
+                sparse_vectors_config={
+                    SPARSE_FIELD: SparseVectorParams(
+                        index=SparseIndexParams(on_disk=False),
+                    )
+                },
+            )
+            print(f"[Engram] Created collection '{settings.qdrant_collection}' "
+                  f"with dense + sparse/{SPARSE_FIELD}")
+        except Exception:
+            client.create_collection(
+                collection_name=settings.qdrant_collection,
+                vectors_config=VectorParams(
+                    size=settings.embedding_dim,
+                    distance=Distance.COSINE,
+                ),
+            )
+            print(f"[Engram] Created collection '{settings.qdrant_collection}' "
+                  f"(dense only — upgrade Qdrant for sparse search)")
+
+    _ensure_payload_indexes(client)
+
+
+def _ensure_payload_indexes(client: QdrantClient):
+    """
+    Create payload indexes for the fields used in every search filter.
+    Qdrant requires indexes on payload fields used in filters.
+    Safe to call multiple times — existing indexes are left untouched.
+    """
+    from qdrant_client.models import PayloadSchemaType
+
+    indexes = [
+        ("user_id",   PayloadSchemaType.KEYWORD),
+        ("is_latest", PayloadSchemaType.BOOL),
+        ("is_valid",  PayloadSchemaType.BOOL),
+    ]
+    for field, schema_type in indexes:
+        try:
+            client.create_payload_index(
+                collection_name=settings.qdrant_collection,
+                field_name=field,
+                field_schema=schema_type,
+            )
+        except Exception:
+            pass  
+
+
+def _collection_has_sparse(client: QdrantClient) -> bool:
+    """Return True if the collection has the sparse vector field configured."""
+    try:
+        info = client.get_collection(settings.qdrant_collection)
+        sparse_configs = getattr(info.config.params, "sparse_vectors", None) or {}
+        return SPARSE_FIELD in sparse_configs
+    except Exception:
+        return False
 
 
 def store(content: str, user_id: str = "default", tags: list[str] = []) -> str:
     """
-    Store a memory. Upserts both dense and sparse vectors.
+    Store a memory. Upserts both dense and sparse vectors when available.
+    Falls back to dense-only if the sparse field is not yet in the collection.
     Returns the memory ID.
     """
     client = _get_client()
@@ -75,16 +134,22 @@ def store(content: str, user_id: str = "default", tags: list[str] = []) -> str:
 
     memory_id    = str(uuid.uuid4())
     dense_vector = embedder.embed(content)
-    sparse_vec   = _tokenize(content)
+
+    if _collection_has_sparse(client):
+        sparse_vec = _tokenize(content)
+        vector = {
+            "": dense_vector,         
+            SPARSE_FIELD: sparse_vec,  
+        }
+    else:
+        print(f"[Engram] Storing dense-only for [{content[:40]}] — sparse field unavailable")
+        vector = dense_vector
 
     client.upsert(
         collection_name=settings.qdrant_collection,
         points=[PointStruct(
             id=memory_id,
-            vector={
-                "": dense_vector,          
-                SPARSE_FIELD: sparse_vec, 
-            },
+            vector=vector,
             payload={
                 "content":    content,
                 "user_id":    user_id,
