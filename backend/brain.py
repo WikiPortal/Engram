@@ -72,13 +72,13 @@ def remember(content: str, user_id: str = "default", tags: list[str] = [], histo
             result["skipped_duplicates"] += 1
             continue
 
-        found, invalidated = resolve(fact_content, user_id)
-        if found:
-            result["contradictions_resolved"] += len(invalidated)
-            for inv_id in invalidated:
-                invalidate_edges(inv_id)
-
         memory_id = _store_raw(fact_content, user_id=user_id, tags=fact_tags)
+
+        found, superseded = resolve(fact_content, user_id, new_memory_id=memory_id)
+        if found:
+            result["contradictions_resolved"] += len(superseded)
+            for inv_id in superseded:
+                invalidate_edges(inv_id)
 
         expires_at = get_expiry(
             fact_content,

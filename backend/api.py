@@ -403,6 +403,49 @@ def delete_memory(memory_id: str, request: Request):
         handle(e)
 
 
+@app.get("/memory/{memory_id}/history")
+@limiter.limit(settings.rate_limit_recall)
+def memory_history(memory_id: str, request: Request, current_user: dict = Depends(get_optional_user)):
+    """
+    Return the full temporal history for a memory.
+    Traverses SUPERSEDES edges to show every version of a fact
+    and when/why each was replaced.
+
+    Example: a user who moved NYC → London → Berlin would show 3 entries
+    in oldest-to-newest order, each with the reason for the change.
+    """
+    try:
+        from graph import get_history
+        user_id = current_user["sub"] if current_user else "default"
+        history = get_history(memory_id, user_id=user_id)
+        return {"memory_id": memory_id, "history": history, "versions": len(history)}
+    except EngramError:
+        raise
+    except Exception as e:
+        handle(e)
+
+
+@app.get("/memory/{memory_id}/chain")
+@limiter.limit(settings.rate_limit_recall)
+def memory_chain(memory_id: str, request: Request, current_user: dict = Depends(get_optional_user)):
+    """
+    Return the immediate supersession chain for a memory.
+    Shows what this memory replaced (if anything) and what replaced it
+    (if anything). One hop in each direction.
+
+    Useful for the UI to show "this replaced: X" and "replaced by: Y".
+    """
+    try:
+        from graph import get_supersession_chain
+        user_id = current_user["sub"] if current_user else "default"
+        chain = get_supersession_chain(memory_id, user_id=user_id)
+        return {"memory_id": memory_id, "chain": chain}
+    except EngramError:
+        raise
+    except Exception as e:
+        handle(e)
+
+
 @app.get("/health", response_model=HealthResponse)
 def health():
     from llm import provider_info
