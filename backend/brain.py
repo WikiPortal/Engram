@@ -12,6 +12,9 @@ RECALL pipeline:
 """
 import tiktoken
 import pii
+from db import get_qdrant
+from embedder import embedder as _embedder
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from extractor import extract
 from dedup import is_duplicate
 from contradiction import resolve, invalidate_memory
@@ -21,6 +24,7 @@ from search import hybrid_search
 from reranker import rerank
 from hyde import expand
 from graph import link_memories, get_related, invalidate_edges
+from llm import chat_complete
 from config import get_settings
 
 settings = get_settings()
@@ -76,25 +80,22 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
             set_ttl(memory_id, expires_at)
 
         try:
-            from qdrant_client import QdrantClient
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-            from embedder import embedder as _embedder
-            _client = get_qdrant()
-            _vec = _embedder.embed(fact_content)
-            _nearby = _client.search(
+            client = get_qdrant()
+            vec = _embedder.embed(fact_content)
+            nearby = client.search(
                 collection_name=settings.qdrant_collection,
-                query_vector=_vec,
+                query_vector=vec,
                 query_filter=Filter(must=[
                     FieldCondition(key="user_id", match=MatchValue(value=user_id)),
                     FieldCondition(key="is_latest", match=MatchValue(value=True)),
-                    FieldCondition(key="is_valid", match=MatchValue(value=True)),
+                    FieldCondition(key="is_valid",  match=MatchValue(value=True)),
                 ]),
                 limit=5,
                 with_payload=True,
             )
             candidates_for_graph = [
                 {"id": str(r.id), "content": r.payload["content"], "score": r.score}
-                for r in _nearby
+                for r in nearby
                 if str(r.id) != memory_id and r.score > 0.4
             ]
             edges = link_memories(memory_id, fact_content, candidates_for_graph, user_id)
@@ -124,28 +125,29 @@ def recall(query: str, user_id: str = "default") -> dict:
     active = [c for c in candidates if not is_expired(c["id"])]
 
     try:
+        client = get_qdrant()
         seen_ids = {c["id"] for c in active}
         graph_additions = []
-        for candidate in active[:5]:
+
+        for candidate in active[:5]:  # bound latency — only expand top 5
             related = get_related(candidate["id"], user_id=user_id, depth=1)
             for rel in related:
                 if rel["id"] not in seen_ids:
-                    from qdrant_client import QdrantClient
-                    _client = get_qdrant()
-                    hits = _client.retrieve(
+                    hits = client.retrieve(
                         collection_name=settings.qdrant_collection,
                         ids=[rel["id"]],
                         with_payload=True,
                     )
                     if hits and hits[0].payload.get("is_valid") and hits[0].payload.get("is_latest"):
                         graph_additions.append({
-                            "id": rel["id"],
-                            "content": hits[0].payload["content"],
-                            "tags": hits[0].payload.get("tags", []),
+                            "id":         rel["id"],
+                            "content":    hits[0].payload["content"],
+                            "tags":       hits[0].payload.get("tags", []),
                             "created_at": hits[0].payload.get("created_at", ""),
-                            "graph_rel": rel["rel_type"],
+                            "graph_rel":  rel["rel_type"],
                         })
                         seen_ids.add(rel["id"])
+
         if graph_additions:
             print(f"[Engram] Graph expansion added {len(graph_additions)} neighbour(s)")
             active = active + graph_additions
@@ -165,20 +167,21 @@ def recall(query: str, user_id: str = "default") -> dict:
         total_tokens += tokens
 
     return {
-        "query": query,
-        "memories": final,
-        "total_found": len(candidates),
-        "context_tokens": total_tokens
+        "query":          query,
+        "memories":       final,
+        "total_found":    len(candidates),
+        "context_tokens": total_tokens,
     }
 
+
+# ── CHAT ─────────────────────────────────────────────────────────
 
 def chat(message: str, user_id: str = "default", history: list[dict] = []) -> str:
     """
     Memory-augmented chat.
-    Recalls relevant memories → injects into prompt → returns answer.
+    Recalls relevant memories → injects into system prompt → returns answer.
     Works with any configured LLM provider (Gemini, OpenAI, Anthropic, DeepSeek).
     """
-    from llm import chat_complete
 
     result = recall(message, user_id=user_id)
     memories = result["memories"]
@@ -191,9 +194,12 @@ def chat(message: str, user_id: str = "default", history: list[dict] = []) -> st
     else:
         memory_context = ""
 
-    system_prompt = f"""You are a personal AI assistant with access to the user's memory bank.
-{memory_context}Use the memories above as context when answering. 
-If memories are not relevant, answer from general knowledge.
-Be concise and helpful."""
+    system_prompt = (
+        "You are a personal AI assistant with access to the user's memory bank.\n"
+        f"{memory_context}"
+        "Use the memories above as context when answering. "
+        "If memories are not relevant, answer from general knowledge. "
+        "Be concise and helpful."
+    )
 
     return chat_complete(system=system_prompt, history=history, message=message)
