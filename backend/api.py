@@ -171,6 +171,14 @@ class StoreRequest(BaseModel):
     content: str = Field(..., description="Raw text to store as memories")
     user_id: str = Field("default", description="User namespace")
     tags: list[str] = Field(default_factory=list, description="Optional tags")
+    history: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Prior conversation turns as {role, content} dicts. "
+            "When provided, sliding window coreference resolution runs "
+            "before fact extraction to resolve pronouns and vague references."
+        )
+    )
 
 
 class StoreResponse(BaseModel):
@@ -237,7 +245,7 @@ def store_memory(req: StoreRequest, request: Request, current_user: dict = Depen
         raise HTTPException(status_code=400, detail="content cannot be empty")
     user_id = current_user["sub"] if current_user else req.user_id
     try:
-        result = brain.remember(req.content, user_id=user_id, tags=req.tags)
+        result = brain.remember(req.content, user_id=user_id, tags=req.tags, history=req.history)
         return StoreResponse(**result)
     except EngramError:
         raise
@@ -266,7 +274,7 @@ def recall_memories(req: RecallRequest, request: Request, current_user: dict = D
         handle(e)
 
 
-def _store_conversation_turn(user_message: str, assistant_response: str, user_id: str) -> None:
+def _store_conversation_turn(user_message: str, assistant_response: str, user_id: str, history: list[dict]) -> None:
     """
     Persist a conversation turn as a memory.
     Called via FastAPI BackgroundTasks — runs after the response is sent,
@@ -284,7 +292,7 @@ def _store_conversation_turn(user_message: str, assistant_response: str, user_id
     """
     try:
         turn = f"User: {user_message}\nAssistant: {assistant_response}"
-        brain.remember(turn, user_id=user_id, tags=["conversation"])
+        brain.remember(turn, user_id=user_id, tags=["conversation"], history=history)
         print(f"[Engram] Conversation turn stored for user [{user_id[:8]}]")
     except Exception as e:
         print(f"[Engram] Background turn store failed (non-critical): {e}")
@@ -325,6 +333,7 @@ def chat(
             user_message=req.message,
             assistant_response=response_text,
             user_id=user_id,
+            history=req.history,
         )
 
         return ChatResponse(response=response_text, memories_used=memories_used)

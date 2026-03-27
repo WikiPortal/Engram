@@ -32,10 +32,18 @@ settings = get_settings()
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
-def remember(content: str, user_id: str = "default", tags: list[str] = []) -> dict:
+def remember(content: str, user_id: str = "default", tags: list[str] = [], history: list[dict] = []) -> dict:
     """
     Full store pipeline.
     Returns summary of what was stored.
+
+    Args:
+        content: Raw text to store as memories.
+        user_id: User namespace.
+        tags:    Optional tags to attach to every extracted fact.
+        history: Prior conversation turns as {"role": ..., "content": ...}
+                 dicts. When provided, sliding window coreference resolution
+                 runs before fact extraction to resolve orphaned pronouns.
     """
     result = {
         "stored": 0,
@@ -47,7 +55,7 @@ def remember(content: str, user_id: str = "default", tags: list[str] = []) -> di
 
     masked, token_map = pii.mask(content)
 
-    facts = extract(masked)
+    facts = extract(masked, history=history)
     if not facts:
         facts = [{"content": masked, "is_temporary": None, "confidence": 0.7, "tags": tags}]
 

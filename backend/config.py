@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     top_k_reranked: int = 5
     max_context_tokens: int = 2000
 
+    sliding_window_lookback: int = 5
+
     app_port: int = 8000
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
