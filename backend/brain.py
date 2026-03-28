@@ -25,6 +25,7 @@ from reranker import rerank
 from hyde import expand
 from graph import link_memories, get_related, invalidate_edges
 from llm import chat_complete
+from retention import init_retention, filter_by_retention
 from config import get_settings
 
 settings = get_settings()
@@ -87,6 +88,7 @@ def remember(content: str, user_id: str = "default", tags: list[str] = [], histo
         if expires_at:
             set_ttl(memory_id, expires_at)
 
+        init_retention(memory_id, fact_content)
         try:
             client = get_qdrant()
             vec = _embedder.embed(fact_content)
@@ -131,6 +133,8 @@ def recall(query: str, user_id: str = "default") -> dict:
         return {"query": query, "memories": [], "total_found": 0, "context_tokens": 0}
 
     active = [c for c in candidates if not is_expired(c["id"])]
+
+    active = filter_by_retention(active)
 
     try:
         client = get_qdrant()
