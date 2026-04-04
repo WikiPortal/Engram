@@ -1,13 +1,16 @@
 """
 Engram — Hybrid Search
-Combines dense vector search + sparse keyword search (BM42 via Qdrant).
+Combines dense vector search + BM25Okapi keyword search.
 Merges results via Reciprocal Rank Fusion (RRF).
 """
+import re
+import hashlib
+import numpy as np
+from rank_bm25 import BM25Okapi
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue,
-    NamedVector, NamedSparseVector, SparseVector,
-    SearchRequest,
+    SparseVector,
 )
 from db import get_qdrant
 from embedder import embedder
@@ -18,10 +21,49 @@ settings = get_settings()
 SPARSE_FIELD = "text_sparse"
 
 
+# ── Shared deterministic tokeniser ───────────────────────────────
+
+def tokenize(text: str) -> list[str]:
+    """
+    Deterministic tokeniser shared by storage (memory.py) and search.
+
+    • Lowercases
+    • Strips punctuation (keeps word characters and whitespace)
+    • Splits on whitespace
+    • Filters empty tokens
+
+    Deterministic: no hash randomisation, no process-local state.
+    Consistent results on every Python version and restart.
+    """
+    text = text.lower()
+    text = re.sub(r"[^\w\s]", " ", text)
+    return [t for t in text.split() if t]
+
+
+def tokens_to_sparse_vector(tokens: list[str]) -> SparseVector:
+    """
+    Convert a token list -> Qdrant SparseVector for storage.
+
+    Uses MD5 (truncated to 31 bits) instead of hash() so the same
+    token always maps to the same index across all processes, workers,
+    and restarts. TF-normalised weights only — IDF is handled by
+    BM25Okapi at query time and by Qdrant's BM42 at storage time.
+    """
+    tf: dict[int, float] = {}
+    for token in tokens:
+        idx = int(hashlib.md5(token.encode()).hexdigest(), 16) % (2 ** 31)
+        tf[idx] = tf.get(idx, 0.0) + 1.0
+    total = sum(tf.values()) or 1.0
+    return SparseVector(
+        indices=list(tf.keys()),
+        values=[v / total for v in tf.values()],
+    )
+
+
 # ── Dense vector search ───────────────────────────────────────────
 
 def _vector_search(query: str, user_id: str, top_k: int) -> list[dict]:
-    """Dense vector similarity search via Qdrant."""
+    """Dense cosine-similarity search via Qdrant."""
     client = get_qdrant()
     query_vector = embedder.embed(query)
 
@@ -49,100 +91,126 @@ def _vector_search(query: str, user_id: str, top_k: int) -> list[dict]:
     ]
 
 
-# ── Sparse keyword search (BM42 / Qdrant native) ──────────────────
+# ── BM25 corpus fetch ─────────────────────────────────────────────
 
-def _tokenize(text: str) -> dict[int, float]:
+def _fetch_corpus(user_id: str) -> tuple[list[str], list[dict]]:
     """
-    Minimal whitespace tokenizer → sparse vector format.
-    Maps each unique token to a term frequency weight.
-    Qdrant's BM42 index handles IDF weighting internally.
+    Scroll all valid memories for this user from Qdrant.
+    Returns (contents, doc_metadata_list).
 
-    Returns {token_hash: tf_weight} suitable for SparseVector.
-    """
-    tokens = text.lower().split()
-    tf: dict[int, float] = {}
-    for token in tokens:
-        h = abs(hash(token)) % (2 ** 31) 
-        tf[h] = tf.get(h, 0.0) + 1.0
-    total = sum(tf.values()) or 1.0
-    return {idx: count / total for idx, count in tf.items()}
-
-
-def _sparse_search(query: str, user_id: str, top_k: int) -> list[dict]:
-    """
-    Sparse keyword search using Qdrant's native sparse vector index.
-    Falls back to [] gracefully if the sparse field doesn't exist yet
-    (e.g. collections created before this update).
+    Payload-only scroll (with_vectors=False) so this is fast even
+    for large collections — only text payloads are transferred.
     """
     client = get_qdrant()
 
     existing = [c.name for c in client.get_collections().collections]
     if settings.qdrant_collection not in existing:
-        return []
+        return [], []
 
-    try:
-        info = client.get_collection(settings.qdrant_collection)
-        sparse_configs = getattr(info.config.params, "sparse_vectors", None) or {}
-        if SPARSE_FIELD not in sparse_configs:
-            print(f"[Engram] Sparse field '{SPARSE_FIELD}' not found — "
-                  f"falling back to vector-only search. "
-                  f"Re-create the collection to enable sparse search.")
-            return []
-    except Exception as e:
-        print(f"[Engram] Sparse field check failed (non-critical): {e}")
-        return []
+    all_docs: list[dict] = []
+    offset = None
 
-    tf_map = _tokenize(query)
-    if not tf_map:
-        return []
-
-    sparse_vec = SparseVector(
-        indices=list(tf_map.keys()),
-        values=list(tf_map.values()),
-    )
-
-    try:
-        results = client.search(
+    while True:
+        results, next_offset = client.scroll(
             collection_name=settings.qdrant_collection,
-            query_vector=NamedSparseVector(name=SPARSE_FIELD, vector=sparse_vec),
-            query_filter=Filter(must=[
+            scroll_filter=Filter(must=[
                 FieldCondition(key="user_id", match=MatchValue(value=user_id)),
                 FieldCondition(key="is_latest", match=MatchValue(value=True)),
                 FieldCondition(key="is_valid",  match=MatchValue(value=True)),
             ]),
-            limit=top_k,
+            limit=1000,
+            offset=offset,
             with_payload=True,
+            with_vectors=False,
         )
+        for r in results:
+            all_docs.append({
+                "id":         str(r.id),
+                "content":    r.payload["content"],
+                "tags":       r.payload.get("tags", []),
+                "created_at": r.payload.get("created_at", ""),
+            })
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    contents = [d["content"] for d in all_docs]
+    return contents, all_docs
+
+
+# ── BM25Okapi keyword search ──────────────────────────────────────
+
+def _bm25_search(query: str, user_id: str, top_k: int) -> list[dict]:
+    """
+    Full-corpus BM25Okapi keyword search with true IDF weighting.
+
+    How it works:
+      1. Fetch all user memories from Qdrant (payload-only scroll).
+      2. Tokenise every memory with the shared deterministic tokeniser.
+      3. Build a BM25Okapi index (Robertson et al., k1=1.5, b=0.75).
+      4. Score the query — rare terms score exponentially higher than
+         common ones, unlike the old TF-only sparse vectors.
+      5. Return top_k results ordered by descending BM25 score.
+
+    Graceful fallbacks:
+      • Empty corpus     -> returns []  (silent)
+      • Zero query score -> skips entry (only real keyword hits returned)
+      • Any exception    -> returns []  and logs the error
+    """
+    try:
+        contents, all_docs = _fetch_corpus(user_id)
     except Exception as e:
-        print(f"[Engram] Sparse search failed (non-critical): {e}")
+        print(f"[Engram] BM25 corpus fetch failed (non-critical): {e}")
         return []
 
-    return [
-        {
-            "id":           str(r.id),
-            "content":      r.payload["content"],
-            "tags":         r.payload.get("tags", []),
-            "created_at":   r.payload.get("created_at", ""),
-            "sparse_score": round(r.score, 4),
-        }
-        for r in results
-    ]
+    if not contents:
+        return []
+
+    tokenized_corpus = [tokenize(c) for c in contents]
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return []
+
+    scores = bm25.get_scores(query_tokens)
+
+    top_indices = np.argsort(scores)[::-1][:top_k]
+    results = []
+    for idx in top_indices:
+        score = float(scores[idx])
+        if score <= 0.0:
+            continue
+        results.append({
+            **all_docs[idx],
+            "bm25_score": round(score, 4),
+        })
+
+    if results:
+        print(
+            f"[Engram] BM25: {len(results)} keyword hit(s) | "
+            f"corpus={len(contents)} | top={results[0]['bm25_score']:.4f}"
+        )
+    else:
+        print(f"[Engram] BM25: no keyword matches (corpus={len(contents)})")
+
+    return results
 
 
 # ── RRF merge ─────────────────────────────────────────────────────
 
 def _rrf_merge(
     vector_results: list[dict],
-    sparse_results: list[dict],
+    bm25_results:   list[dict],
     k: int = 60,
 ) -> list[dict]:
     """
-    Reciprocal Rank Fusion — merges two ranked lists.
-    score = sum of 1/(k + rank) across both lists.
-    k=60 is the standard RRF constant (Robertson et al.).
+    Reciprocal Rank Fusion (Robertson et al.) — merges two ranked lists.
 
-    Works correctly when either list is empty — the other list's
-    scores dominate, giving graceful fallback behaviour.
+    score(d) = sum of  1 / (k + rank_i(d))  over both lists.
+
+    k=60 is the standard constant. Works correctly when either list is
+    empty — the other list's scores dominate, giving graceful fallback.
     """
     scores:    dict[str, float] = {}
     all_items: dict[str, dict]  = {}
@@ -152,7 +220,7 @@ def _rrf_merge(
         scores[mid]    = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
         all_items[mid] = item
 
-    for rank, item in enumerate(sparse_results):
+    for rank, item in enumerate(bm25_results):
         mid = item["id"]
         scores[mid]    = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
         all_items[mid] = item
@@ -170,16 +238,19 @@ def _rrf_merge(
 def hybrid_search(query: str, user_id: str = "default", top_k: int = None) -> list[dict]:
     """
     Full hybrid search pipeline.
-    Dense vector + sparse keyword → RRF merge → top_k results.
 
-    If sparse search is unavailable (old collection without the sparse
-    field), falls back to vector-only results transparently.
+      dense vector  --.
+                      +--> RRF merge --> top_k results
+      BM25Okapi    --'
+
+    Falls back to vector-only gracefully if BM25 returns nothing
+    (empty corpus, all-zero scores, fetch error).
     """
     if top_k is None:
         top_k = settings.top_k_retrieval
 
     vector_results = _vector_search(query, user_id, top_k)
-    sparse_results = _sparse_search(query, user_id, top_k)
-    merged         = _rrf_merge(vector_results, sparse_results)
+    bm25_results   = _bm25_search(query, user_id, top_k)
+    merged         = _rrf_merge(vector_results, bm25_results)
 
     return merged[:top_k]

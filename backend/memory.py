@@ -13,32 +13,16 @@ from qdrant_client.models import (
     SparseVector,
 )
 from embedder import embedder
+from search import tokenize, tokens_to_sparse_vector
 from config import get_settings
 
 settings = get_settings()
 
-SPARSE_FIELD = "text_sparse" 
+SPARSE_FIELD = "text_sparse"
 
 
 def _get_client() -> QdrantClient:
     return get_qdrant()
-
-
-def _tokenize(text: str) -> SparseVector:
-    """
-    Whitespace tokenizer → SparseVector for Qdrant BM42 index.
-    Maps token hashes to normalised term frequencies.
-    """
-    tokens = text.lower().split()
-    tf: dict[int, float] = {}
-    for token in tokens:
-        h = abs(hash(token)) % (2 ** 31)
-        tf[h] = tf.get(h, 0.0) + 1.0
-    total = sum(tf.values()) or 1.0
-    return SparseVector(
-        indices=list(tf.keys()),
-        values=[v / total for v in tf.values()],
-    )
 
 
 def _ensure_collection(client: QdrantClient):
@@ -136,10 +120,10 @@ def store(content: str, user_id: str = "default", tags: list[str] = []) -> str:
     dense_vector = embedder.embed(content)
 
     if _collection_has_sparse(client):
-        sparse_vec = _tokenize(content)
+        sparse_vec = tokens_to_sparse_vector(tokenize(content))
         vector = {
-            "": dense_vector,         
-            SPARSE_FIELD: sparse_vec,  
+            "":          dense_vector,
+            SPARSE_FIELD: sparse_vec,
         }
     else:
         print(f"[Engram] Storing dense-only for [{content[:40]}] — sparse field unavailable")
